@@ -50,7 +50,8 @@ def download_model(cache_dir: Path) -> Path:
             f"{GEMMA_IT.repository} at revision {GEMMA_IT.revision}. "
             "The model is unavailable locally, usually because Hugging Face "
             "could not be reached or the cache is not writable. Check network "
-            "access and cache permissions, then rerun `download`. "
+            "access and cache permissions, then rerun "
+            "`uv run python -m quadratic_voting.main download`. "
             f"Underlying error: {error}"
         ) from error
     return Path(downloaded)
@@ -70,7 +71,8 @@ def cached_model(cache_dir: Path) -> Path:
         raise RunnerError(
             "Gemma chat could not start because the pinned model is missing "
             f"from the Hugging Face cache at {cache_dir}. Run "
-            "`python -m quadratic_voting.main download` before starting chat. "
+            "`uv run python -m quadratic_voting.main download` before starting "
+            "chat. "
             f"Underlying error: {error}"
         ) from error
     return Path(cached)
@@ -83,7 +85,8 @@ def run_chat(cache_dir: Path, context_size: int, gpu_layers: int) -> None:
         raise RunnerError(
             "Gemma chat could not start because `llama-cli` was not found on "
             "PATH during runtime startup. Enter this project's Nix development "
-            "shell with `nix develop`, then rerun the chat command."
+            "shell with `nix develop`, then rerun "
+            "`uv run python -m quadratic_voting.main chat`."
         )
 
     model_path = cached_model(cache_dir)
@@ -99,19 +102,34 @@ def run_chat(cache_dir: Path, context_size: int, gpu_layers: int) -> None:
     ]
     try:
         subprocess.run(command, check=True)
+    except OSError as error:
+        raise RunnerError(
+            "Gemma chat could not start the resolved llama.cpp executable "
+            f"`{llama_cli}` during subprocess startup. The operating system "
+            f"reported: {error}. Verify that the executable exists, is "
+            "executable, and that its Nix runtime dependencies are available; "
+            "then re-enter `nix develop` and rerun "
+            "`uv run python -m quadratic_voting.main chat`."
+        ) from error
     except subprocess.CalledProcessError as error:
         raise RunnerError(
             "Gemma chat failed after `llama-cli` started interactive inference. "
             f"The subprocess exited with status {error.returncode}; this means "
             "no further responses can be generated. Review llama.cpp's output "
             "for GPU or model-loading errors, reduce `--gpu-layers` if VRAM is "
-            "insufficient, and rerun the chat command."
+            "insufficient, and rerun "
+            "`uv run python -m quadratic_voting.main chat`."
         ) from error
 
 
 def positive_integer(value: str) -> int:
     """Parse a positive integer for an argparse option."""
-    parsed = int(value)
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not an integer; expected a positive integer"
+        ) from error
     if parsed <= 0:
         raise argparse.ArgumentTypeError("value must be a positive integer")
     return parsed
@@ -119,7 +137,12 @@ def positive_integer(value: str) -> int:
 
 def nonnegative_integer(value: str) -> int:
     """Parse a nonnegative integer for an argparse option."""
-    parsed = int(value)
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not an integer; expected zero or a positive integer"
+        ) from error
     if parsed < 0:
         raise argparse.ArgumentTypeError("value must be zero or greater")
     return parsed

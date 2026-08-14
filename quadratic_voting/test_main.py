@@ -1,5 +1,10 @@
+import argparse
+import os
+import shutil
 from pathlib import Path
 import subprocess
+import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -53,6 +58,18 @@ class GemmaRunnerTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             main.main(["chat", "--gpu-layers", "-1"])
 
+    def test_integer_parsers_report_nonnumeric_values(self) -> None:
+        with self.assertRaisesRegex(
+            argparse.ArgumentTypeError,
+            "'many' is not an integer; expected a positive integer",
+        ):
+            main.positive_integer("many")
+        with self.assertRaisesRegex(
+            argparse.ArgumentTypeError,
+            "'some' is not an integer; expected zero or a positive integer",
+        ):
+            main.nonnegative_integer("some")
+
     @patch("quadratic_voting.main.hf_hub_download")
     def test_download_uses_pinned_official_artifact(self, download: object) -> None:
         download.return_value = "/cache/model.gguf"  # type: ignore[attr-defined]
@@ -71,8 +88,46 @@ class GemmaRunnerTests(unittest.TestCase):
     def test_cached_model_reports_download_command(self, download: object) -> None:
         download.side_effect = LocalEntryNotFoundError("not cached")  # type: ignore[attr-defined]
 
-        with self.assertRaisesRegex(main.RunnerError, "main download"):
+        with self.assertRaisesRegex(main.RunnerError, "uv run python -m"):
             main.cached_model(Path("/cache"))
+
+    def test_empty_real_hf_cache_reports_local_only_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as cache_dir:
+            with self.assertRaisesRegex(
+                main.RunnerError,
+                "uv run python -m quadratic_voting.main download",
+            ):
+                main.cached_model(Path(cache_dir))
+
+    def test_module_help_runs_with_active_interpreter(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "quadratic_voting.main", "--help"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertIn("official instruction-tuned Gemma 4", result.stdout)
+        self.assertIn("Base/non-instruction-tuned support is deferred", result.stdout)
+
+    def test_nix_llama_cli_starts(self) -> None:
+        if "IN_NIX_SHELL" not in os.environ:
+            self.skipTest("outside nix develop; Nix-provided llama-cli unavailable")
+
+        llama_cli = shutil.which("llama-cli")
+        self.assertIsNotNone(
+            llama_cli, "llama-cli must be available inside the Nix development shell"
+        )
+        assert llama_cli is not None
+
+        result = subprocess.run(
+            [llama_cli, "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertIn("version:", result.stdout + result.stderr)
 
     @patch("quadratic_voting.main.subprocess.run")
     @patch("quadratic_voting.main.cached_model", return_value=Path("/cache/model.gguf"))
@@ -109,7 +164,25 @@ class GemmaRunnerTests(unittest.TestCase):
     ) -> None:
         run.side_effect = subprocess.CalledProcessError(7, ["llama-cli"])  # type: ignore[attr-defined]
 
-        with self.assertRaisesRegex(main.RunnerError, "status 7"):
+        with self.assertRaisesRegex(
+            main.RunnerError, "status 7.*uv run python -m quadratic_voting.main chat"
+        ):
+            main.run_chat(Path("/cache"), context_size=4096, gpu_layers=0)
+
+    @patch("quadratic_voting.main.subprocess.run")
+    @patch("quadratic_voting.main.cached_model", return_value=Path("/cache/model.gguf"))
+    @patch(
+        "quadratic_voting.main.shutil.which", return_value="/nix/store/bin/llama-cli"
+    )
+    def test_chat_reports_subprocess_startup_failure(
+        self, which: object, cached: object, run: object
+    ) -> None:
+        run.side_effect = OSError("permission denied")  # type: ignore[attr-defined]
+
+        with self.assertRaisesRegex(
+            main.RunnerError,
+            "/nix/store/bin/llama-cli.*permission denied.*executable.*uv run python -m",
+        ):
             main.run_chat(Path("/cache"), context_size=4096, gpu_layers=0)
 
 

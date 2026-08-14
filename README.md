@@ -13,16 +13,16 @@ not currently publish an official base Q4_0 artifact matching this workflow.
 ```console
 nix develop
 uv sync
-python -m quadratic_voting.main download
-python -m quadratic_voting.main chat
+uv run python -m quadratic_voting.main download
+uv run python -m quadratic_voting.main chat
 ```
 
 Downloads use the Hugging Face Hub cache (normally
 `~/.cache/huggingface/hub`). Override it before the subcommand when needed:
 
 ```console
-python -m quadratic_voting.main --cache-dir /path/to/cache download
-python -m quadratic_voting.main --cache-dir /path/to/cache chat --gpu-layers 99
+uv run python -m quadratic_voting.main --cache-dir /path/to/cache download
+uv run python -m quadratic_voting.main --cache-dir /path/to/cache chat --gpu-layers 99
 ```
 
 The chat command uses llama.cpp conversation mode, which applies the chat
@@ -41,5 +41,5 @@ Pinned artifact:
 Run the relocated smoke test from the development shell:
 
 ```console
-python quadratic_voting/test_cuda.py
+uv run python quadratic_voting/test_cuda.py
 ```

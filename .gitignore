@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+secrets_local.py
+.DS_Store

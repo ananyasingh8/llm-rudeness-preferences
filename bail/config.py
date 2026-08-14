@@ -58,4 +58,24 @@ def get_augment_api_key() -> str:
     return key
 
 
-os.makedirs(DATA_DIR, exist_ok=True)
+# --------------------------------------------------------------------------
+# Bail experiment (src/gemma_batch.py) -- per SPEC.md incl. amendment A1.
+# Gemma runs via the OpenRouter Batch API (50% token discount, 24h window).
+# --------------------------------------------------------------------------
+BAIL_MODEL = "google/gemma-4-31b-it:batch"
+BAIL_MODEL_NAME = "Gemma"          # own-model name used in the bail tool text
+OPENROUTER_BATCH_URL = "https://openrouter.ai/api/beta/batches"
+BATCH_ENDPOINT = "/v1/chat/completions"
+
+N_SAMPLES = 10                     # samples per (prompt, condition, method) cell
+BAIL_MAX_TOKENS = 1000             # room for journaling around <wellbeing>
+# Per SPEC amendment A1: no explicit temperature -- provider default sampling.
+
+BATCH_CHUNK_SIZE = 4200            # requests per submitted batch (keeps any
+                                   # one failed batch's blast radius small)
+BATCHES_DIR = os.path.join(DATA_DIR, "batches")
+BATCH_REGISTRY = os.path.join(BATCHES_DIR, "registry.json")
+RESULTS_DIR = os.path.join(DATA_DIR, "results")
+
+for _d in (DATA_DIR, BATCHES_DIR, RESULTS_DIR):
+    os.makedirs(_d, exist_ok=True)

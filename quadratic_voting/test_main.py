@@ -9,6 +9,11 @@ from quadratic_voting import main
 
 
 class GemmaRunnerTests(unittest.TestCase):
+    def test_help_marks_base_support_as_deferred(self) -> None:
+        help_text = main.build_parser().format_help()
+
+        self.assertIn("Base/non-instruction-tuned support is deferred", help_text)
+
     @patch(
         "quadratic_voting.main.download_model",
         return_value=Path("/cache/model.gguf"),

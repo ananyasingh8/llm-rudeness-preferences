@@ -131,7 +131,13 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Download or chat with Google's official instruction-tuned Gemma 4 "
             "E2B QAT Q4_0 GGUF."
-        )
+        ),
+        epilog=(
+            "The current implementation supports only Google's official "
+            "instruction-tuned Q4_0 GGUF. Base/non-instruction-tuned support "
+            "is deferred because no official Google base Q4_0 artifact is "
+            "currently available."
+        ),
     )
     parser.add_argument(
         "--cache-dir",

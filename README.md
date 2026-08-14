@@ -6,9 +6,9 @@ The `quadratic_voting` runner downloads Google's official instruction-tuned
 Gemma 4 E2B QAT Q4_0 GGUF at an immutable Hugging Face revision and starts it
 with the Nix-provided CUDA-enabled `llama-cli`.
 
-Google does not publish an official base/non-instruction-tuned Gemma 4 E2B
-Q4_0 GGUF. The runner intentionally supports only the official `it` artifact;
-it does not download or imply support for a community base quantization.
+The current implementation supports only Google's official instruction-tuned
+Q4_0 GGUF. Base/non-instruction-tuned support is deferred because Google does
+not currently publish an official base Q4_0 artifact matching this workflow.
 
 ```console
 nix develop

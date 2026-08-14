@@ -60,9 +60,14 @@ def get_augment_api_key() -> str:
 
 # --------------------------------------------------------------------------
 # Bail experiment (src/gemma_batch.py) -- per SPEC.md incl. amendment A1.
-# Gemma runs via the OpenRouter Batch API (50% token discount, 24h window).
+# Gemma runs LIVE against OpenRouter chat completions: the OpenRouter Batch
+# API covers closed-provider models only (no :batch endpoint for Gemma).
+# Batch machinery in src/gemma_batch.py is kept for the Sonnet leg
+# (anthropic/claude-sonnet-5:batch exists), if we route it via OpenRouter.
 # --------------------------------------------------------------------------
-BAIL_MODEL = "google/gemma-4-31b-it:batch"
+BAIL_MODEL = "google/gemma-4-31b-it"
+OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+BAIL_CONCURRENCY = 16              # thread-pool size for live calls
 BAIL_MODEL_NAME = "Gemma"          # own-model name used in the bail tool text
 OPENROUTER_BATCH_URL = "https://openrouter.ai/api/beta/batches"
 BATCH_ENDPOINT = "/v1/chat/completions"

@@ -306,6 +306,87 @@ def cmd_collect() -> None:
     save_registry(reg)
 
 
+# ---------------------------------------------------------------------------
+# Live (non-batch) runner -- OpenRouter has no :batch endpoint for Gemma.
+# ---------------------------------------------------------------------------
+
+def _call_live(session: requests.Session, req: dict) -> dict:
+    """One chat-completions call with retry/backoff; returns a batch-shaped
+    result dict so parse_result can be reused."""
+    payload = {"model": config.BAIL_MODEL, **req["body"]}
+    last_err = None
+    for attempt in range(config.API_MAX_RETRIES + 1):
+        try:
+            resp = session.post(
+                config.OPENROUTER_CHAT_URL,
+                headers={"Authorization": f"Bearer {api_key()}",
+                         "Content-Type": "application/json"},
+                json=payload, timeout=180)
+            if resp.status_code in (429, 500, 502, 503):
+                raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+            body = resp.json()
+            if "error" in body and "choices" not in body:
+                raise RuntimeError(f"API error: {str(body['error'])[:200]}")
+            return {"custom_id": req["custom_id"],
+                    "response": {"status_code": resp.status_code, "body": body},
+                    "error": None}
+        except Exception as e:
+            last_err = e
+            if attempt < config.API_MAX_RETRIES:
+                time.sleep(min(2 ** attempt, 30))
+    return {"custom_id": req["custom_id"], "response": None,
+            "error": {"message": f"{type(last_err).__name__}: {last_err}"}}
+
+
+def _flush(rows: list[dict], phase: str, condition: str) -> None:
+    if not rows:
+        return
+    new = pd.DataFrame(rows)
+    path = results_path(phase, condition)
+    if os.path.exists(path):
+        old = pd.read_parquet(path)
+        new = pd.concat([old, new], ignore_index=True).drop_duplicates(
+            subset="custom_id", keep="last")
+    new.to_parquet(path, index=False)
+
+
+def cmd_run(phase: str, condition: str, limit: int = 0) -> None:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    reqs = build_requests(phase, condition)
+    if limit:
+        reqs = reqs[:limit]
+    path = results_path(phase, condition)
+    done: set[str] = set()
+    if os.path.exists(path):
+        existing = pd.read_parquet(path)
+        done = set(existing.loc[existing["error"].isna(), "custom_id"])
+    todo = [r for r in reqs if r["custom_id"] not in done]
+    log.info("live run %s/%s: %d requests (%d already done, %d to run)",
+             phase, condition, len(reqs), len(reqs) - len(todo), len(todo))
+    if not todo:
+        return
+
+    session = requests.Session()
+    buffer: list[dict] = []
+    n_done = n_fail = 0
+    with ThreadPoolExecutor(max_workers=config.BAIL_CONCURRENCY) as pool:
+        futures = [pool.submit(_call_live, session, r) for r in todo]
+        for fut in as_completed(futures):
+            result = fut.result()
+            buffer.append(parse_result(result["custom_id"], result))
+            n_done += 1
+            if result["error"]:
+                n_fail += 1
+            if n_done % 200 == 0 or n_done == len(todo):
+                _flush(buffer, phase, condition)
+                buffer = []
+                log.info("progress: %d/%d (%d failed)", n_done, len(todo), n_fail)
+    _flush(buffer, phase, condition)
+    log.info("live run complete: %d calls, %d failed after retries "
+             "(failed rows are retried on re-run)", n_done, n_fail)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -314,6 +395,10 @@ def main() -> None:
     s.add_argument("--phase", choices=PHASES, required=True)
     s.add_argument("--condition", choices=CONDITIONS, required=True)
     s.add_argument("--smoke-n", type=int, default=0)
+    r = sub.add_parser("run")
+    r.add_argument("--phase", choices=PHASES, required=True)
+    r.add_argument("--condition", choices=CONDITIONS, required=True)
+    r.add_argument("--limit", type=int, default=0)
     sub.add_parser("status")
     sub.add_parser("collect")
     args = p.parse_args()
@@ -322,6 +407,8 @@ def main() -> None:
         cmd_smoke()
     elif args.cmd == "submit":
         cmd_submit(args.phase, args.condition, args.smoke_n)
+    elif args.cmd == "run":
+        cmd_run(args.phase, args.condition, args.limit)
     elif args.cmd == "status":
         cmd_status()
     elif args.cmd == "collect":

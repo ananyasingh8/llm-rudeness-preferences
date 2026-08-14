@@ -1,103 +1,117 @@
 import argparse
 import os
-import shutil
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from typing import cast
+from unittest.mock import MagicMock, patch
 
+import torch
 from huggingface_hub.errors import LocalEntryNotFoundError
+from httpx import ProxyError
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from quadratic_voting import main
 
 
 class GemmaRunnerTests(unittest.TestCase):
-    def test_help_marks_base_support_as_deferred(self) -> None:
+    def test_help_describes_python_runtime(self) -> None:
         help_text = main.build_parser().format_help()
 
-        self.assertIn("Base/non-instruction-tuned support is deferred", help_text)
+        self.assertIn("Transformers and PyTorch", help_text)
+        self.assertNotIn("llama.cpp", help_text)
 
     @patch(
         "quadratic_voting.main.download_model",
-        return_value=Path("/cache/model.gguf"),
+        return_value=Path("/cache/snapshot"),
     )
     def test_cli_download_dispatches_with_selected_cache(
-        self, download: object
+        self, download: MagicMock
     ) -> None:
         with patch("builtins.print") as output:
             result = main.main(["--cache-dir", "/cache", "download"])
 
         self.assertEqual(result, 0)
-        download.assert_called_once_with(Path("/cache"))  # type: ignore[attr-defined]
+        download.assert_called_once_with(Path("/cache"))
         output.assert_called_once_with(
-            "Downloaded pinned Gemma model to: /cache/model.gguf"
+            "Downloaded pinned Gemma checkpoint to: /cache/snapshot"
         )
 
     @patch("quadratic_voting.main.run_chat")
-    def test_cli_chat_dispatches_runtime_options(self, run_chat: object) -> None:
+    def test_cli_chat_dispatches_runtime_options(self, run_chat: MagicMock) -> None:
         result = main.main(
             [
                 "--cache-dir",
                 "/cache",
                 "chat",
-                "--context-size",
-                "4096",
-                "--gpu-layers",
-                "12",
+                "--device",
+                "cpu",
+                "--max-new-tokens",
+                "64",
             ]
         )
 
         self.assertEqual(result, 0)
-        run_chat.assert_called_once_with(  # type: ignore[attr-defined]
-            Path("/cache"), 4096, 12
-        )
+        run_chat.assert_called_once_with(Path("/cache"), main.Device.CPU, 64)
 
-    def test_cli_rejects_negative_gpu_layers(self) -> None:
+    def test_cli_rejects_invalid_max_new_tokens(self) -> None:
         with self.assertRaises(SystemExit):
-            main.main(["chat", "--gpu-layers", "-1"])
+            main.main(["chat", "--max-new-tokens", "0"])
 
-    def test_integer_parsers_report_nonnumeric_values(self) -> None:
+    def test_integer_parser_reports_nonnumeric_values(self) -> None:
         with self.assertRaisesRegex(
             argparse.ArgumentTypeError,
             "'many' is not an integer; expected a positive integer",
         ):
             main.positive_integer("many")
-        with self.assertRaisesRegex(
-            argparse.ArgumentTypeError,
-            "'some' is not an integer; expected zero or a positive integer",
-        ):
-            main.nonnegative_integer("some")
 
-    @patch("quadratic_voting.main.hf_hub_download")
-    def test_download_uses_pinned_official_artifact(self, download: object) -> None:
-        download.return_value = "/cache/model.gguf"  # type: ignore[attr-defined]
+    @patch("quadratic_voting.main.snapshot_download")
+    def test_download_uses_pinned_official_artifact(self, download: MagicMock) -> None:
+        download.return_value = "/cache/snapshot"
 
         result = main.download_model(Path("/cache"))
 
-        self.assertEqual(result, Path("/cache/model.gguf"))
-        download.assert_called_once_with(  # type: ignore[attr-defined]
-            repo_id="google/gemma-4-E2B-it-qat-q4_0-gguf",
-            filename="gemma-4-E2B_q4_0-it.gguf",
-            revision="675cff42a74c774d6cb76f76d8eacb49b48c9b93",
+        self.assertEqual(result, Path("/cache/snapshot"))
+        download.assert_called_once_with(
+            repo_id="google/gemma-4-E2B-it-qat-q4_0-unquantized",
+            revision="6befbaca7398925921802abd1f277b495b78b738",
             cache_dir=Path("/cache"),
         )
 
-    @patch("quadratic_voting.main.hf_hub_download")
-    def test_cached_model_reports_download_command(self, download: object) -> None:
-        download.side_effect = LocalEntryNotFoundError("not cached")  # type: ignore[attr-defined]
+    @patch("quadratic_voting.main.snapshot_download")
+    def test_download_reports_proxy_failure(self, download: MagicMock) -> None:
+        download.side_effect = ProxyError("proxy unavailable")
+
+        with self.assertRaisesRegex(main.RunnerError, "proxy unavailable"):
+            main.download_model(Path("/cache"))
+
+    @patch("quadratic_voting.main.snapshot_download")
+    def test_cached_model_requires_complete_local_snapshot(
+        self, download: MagicMock
+    ) -> None:
+        download.side_effect = LocalEntryNotFoundError("not cached")
 
         with self.assertRaisesRegex(main.RunnerError, "uv run python -m"):
             main.cached_model(Path("/cache"))
 
+        download.assert_called_once_with(
+            repo_id=main.GEMMA_IT.repository,
+            revision=main.GEMMA_IT.revision,
+            cache_dir=Path("/cache"),
+            local_files_only=True,
+        )
+
     def test_empty_real_hf_cache_reports_local_only_failure(self) -> None:
-        with tempfile.TemporaryDirectory() as cache_dir:
-            with self.assertRaisesRegex(
+        with (
+            tempfile.TemporaryDirectory() as cache_dir,
+            self.assertRaisesRegex(
                 main.RunnerError,
                 "uv run python -m quadratic_voting.main download",
-            ):
-                main.cached_model(Path(cache_dir))
+            ),
+        ):
+            main.cached_model(Path(cache_dir))
 
     def test_module_help_runs_with_active_interpreter(self) -> None:
         result = subprocess.run(
@@ -107,83 +121,175 @@ class GemmaRunnerTests(unittest.TestCase):
             text=True,
         )
 
-        self.assertIn("official instruction-tuned Gemma 4", result.stdout)
-        self.assertIn("Base/non-instruction-tuned support is deferred", result.stdout)
+        self.assertIn("Transformers and PyTorch", result.stdout)
 
-    def test_nix_llama_cli_starts(self) -> None:
-        if "IN_NIX_SHELL" not in os.environ:
-            self.skipTest("outside nix develop; Nix-provided llama-cli unavailable")
+    def test_auto_device_uses_accelerate_placement(self) -> None:
+        self.assertIs(main.resolve_device(main.Device.AUTO), main.Device.AUTO)
 
-        llama_cli = shutil.which("llama-cli")
-        self.assertIsNotNone(
-            llama_cli, "llama-cli must be available inside the Nix development shell"
-        )
-        assert llama_cli is not None
-
-        result = subprocess.run(
-            [llama_cli, "--version"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-
-        self.assertIn("version:", result.stdout + result.stderr)
-
-    @patch("quadratic_voting.main.subprocess.run")
-    @patch("quadratic_voting.main.cached_model", return_value=Path("/cache/model.gguf"))
-    @patch("quadratic_voting.main.shutil.which", return_value="/bin/llama-cli")
-    def test_chat_uses_conversation_mode_and_embedded_template(
-        self, which: object, cached: object, run: object
+    @patch("quadratic_voting.main.torch.cuda.is_available", return_value=False)
+    def test_explicit_cuda_requires_available_device(
+        self, is_available: MagicMock
     ) -> None:
-        main.run_chat(Path("/cache"), context_size=4096, gpu_layers=12)
+        with self.assertRaisesRegex(main.RunnerError, "--device cpu"):
+            main.resolve_device(main.Device.CUDA)
 
-        run.assert_called_once_with(  # type: ignore[attr-defined]
-            [
-                "/bin/llama-cli",
-                "--model",
-                "/cache/model.gguf",
-                "--conversation",
-                "--ctx-size",
-                "4096",
-                "--gpu-layers",
-                "12",
-            ],
-            check=True,
-        )
-
-    @patch("quadratic_voting.main.shutil.which", return_value=None)
-    def test_chat_reports_missing_llama_cli(self, which: object) -> None:
-        with self.assertRaisesRegex(main.RunnerError, "nix develop"):
-            main.run_chat(Path("/cache"), context_size=4096, gpu_layers=0)
-
-    @patch("quadratic_voting.main.subprocess.run")
-    @patch("quadratic_voting.main.cached_model", return_value=Path("/cache/model.gguf"))
-    @patch("quadratic_voting.main.shutil.which", return_value="/bin/llama-cli")
-    def test_chat_reports_subprocess_failure(
-        self, which: object, cached: object, run: object
-    ) -> None:
-        run.side_effect = subprocess.CalledProcessError(7, ["llama-cli"])  # type: ignore[attr-defined]
-
-        with self.assertRaisesRegex(
-            main.RunnerError, "status 7.*uv run python -m quadratic_voting.main chat"
-        ):
-            main.run_chat(Path("/cache"), context_size=4096, gpu_layers=0)
-
-    @patch("quadratic_voting.main.subprocess.run")
-    @patch("quadratic_voting.main.cached_model", return_value=Path("/cache/model.gguf"))
     @patch(
-        "quadratic_voting.main.shutil.which", return_value="/nix/store/bin/llama-cli"
+        "quadratic_voting.main.torch.cuda.mem_get_info",
+        return_value=(8_000_000_000, 24_000_000_000),
     )
-    def test_chat_reports_subprocess_startup_failure(
-        self, which: object, cached: object, run: object
+    @patch("quadratic_voting.main.torch.cuda.is_available", return_value=True)
+    def test_explicit_cuda_requires_enough_free_memory(
+        self, is_available: MagicMock, mem_get_info: MagicMock
     ) -> None:
-        run.side_effect = OSError("permission denied")  # type: ignore[attr-defined]
+        with self.assertRaisesRegex(main.RunnerError, "8.0 GB.*12.0 GB.*--device auto"):
+            main.resolve_device(main.Device.CUDA)
+
+    @patch("quadratic_voting.main.AutoModelForCausalLM.from_pretrained")
+    @patch("quadratic_voting.main.AutoTokenizer.from_pretrained")
+    @patch("quadratic_voting.main.resolve_device", return_value=main.Device.AUTO)
+    def test_runtime_loads_local_bf16_checkpoint(
+        self,
+        resolve: MagicMock,
+        load_tokenizer: MagicMock,
+        load_model: MagicMock,
+    ) -> None:
+        model = load_model.return_value
+
+        result = main.load_runtime(Path("/cache/snapshot"), main.Device.AUTO)
+
+        self.assertEqual(result, (model, load_tokenizer.return_value))
+        load_tokenizer.assert_called_once_with(
+            Path("/cache/snapshot"), local_files_only=True, padding_side="left"
+        )
+        load_model.assert_called_once_with(
+            Path("/cache/snapshot"),
+            local_files_only=True,
+            device_map="auto",
+            dtype=torch.bfloat16,
+            attn_implementation="sdpa",
+        )
+        model.eval.assert_called_once_with()
+
+    @unittest.skipUnless(
+        os.environ.get("RUN_HF_INTEGRATION") == "1",
+        "set RUN_HF_INTEGRATION=1 to verify pinned Hub metadata",
+    )
+    def test_pinned_transformers_metadata_and_chat_template(self) -> None:
+        config = AutoConfig.from_pretrained(
+            main.GEMMA_IT.repository,
+            revision=main.GEMMA_IT.revision,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(
+            main.GEMMA_IT.repository,
+            revision=main.GEMMA_IT.revision,
+            padding_side="left",
+        )
+
+        self.assertEqual(type(config).__name__, "Gemma4Config")
+        model_class = cast(
+            type[object], AutoModelForCausalLM._model_mapping[type(config)]
+        )
+        self.assertEqual(model_class.__name__, "Gemma4ForConditionalGeneration")
+        rendered = cast(
+            str,
+            tokenizer.apply_chat_template(
+                [{"role": "user", "content": "Hello"}],
+                tokenize=False,
+                add_generation_prompt=True,
+            ),
+        )
+        self.assertIn("<|turn>user\nHello<turn|>", rendered)
+        self.assertTrue(rendered.endswith("<|turn>model\n"))
+
+    @patch("quadratic_voting.main.load_runtime")
+    @patch("quadratic_voting.main.cached_model", return_value=Path("/cache/snapshot"))
+    def test_chat_preserves_conversation_and_generates_response(
+        self, cached: MagicMock, load_runtime: MagicMock
+    ) -> None:
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.return_value = torch.tensor([[1, 2, 3, 4]])
+        tokenizer = MagicMock()
+        inputs = {"input_ids": torch.tensor([[1, 2]])}
+        batch = MagicMock()
+        batch.to.return_value = inputs
+        tokenizer.apply_chat_template.return_value = batch
+        tokenizer.decode.return_value = "Hello"
+        load_runtime.return_value = (model, tokenizer)
+        prompts = iter(["Hi", "/exit"])
+        output: list[str] = []
+
+        main.run_chat(
+            Path("/cache"),
+            main.Device.CPU,
+            16,
+            read_input=lambda _: next(prompts),
+            write_output=output.append,
+        )
+
+        tokenizer.apply_chat_template.assert_called_once_with(
+            [{"role": "user", "content": "Hi"}],
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            add_generation_prompt=True,
+        )
+        model.generate.assert_called_once_with(
+            **inputs, max_new_tokens=16, do_sample=False
+        )
+        tokenizer.decode.assert_called_once()
+        self.assertEqual(output, ["Gemma: Hello"])
+
+    @patch("quadratic_voting.main.load_runtime")
+    @patch("quadratic_voting.main.cached_model", return_value=Path("/cache/snapshot"))
+    def test_chat_reports_generation_failure(
+        self, cached: MagicMock, load_runtime: MagicMock
+    ) -> None:
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        model.generate.side_effect = RuntimeError("out of memory")
+        tokenizer = MagicMock()
+        batch = MagicMock()
+        batch.to.return_value = {"input_ids": torch.tensor([[1, 2]])}
+        tokenizer.apply_chat_template.return_value = batch
+        load_runtime.return_value = (model, tokenizer)
+
+        with self.assertRaisesRegex(main.RunnerError, "out of memory"):
+            main.run_chat(
+                Path("/cache"),
+                main.Device.CPU,
+                16,
+                read_input=lambda _: "Hi",
+            )
+
+    @patch("quadratic_voting.main.load_runtime")
+    @patch("quadratic_voting.main.cached_model", return_value=Path("/cache/snapshot"))
+    def test_chat_rejects_conversation_beyond_model_context(
+        self, cached: MagicMock, load_runtime: MagicMock
+    ) -> None:
+        model = MagicMock()
+        model.device = torch.device("cpu")
+        tokenizer = MagicMock()
+        batch = MagicMock()
+        batch.to.return_value = {
+            "input_ids": torch.zeros(
+                (1, main.MAX_CONTEXT_TOKENS - 8), dtype=torch.int64
+            )
+        }
+        tokenizer.apply_chat_template.return_value = batch
+        load_runtime.return_value = (model, tokenizer)
 
         with self.assertRaisesRegex(
-            main.RunnerError,
-            "/nix/store/bin/llama-cli.*permission denied.*executable.*uv run python -m",
+            main.RunnerError, "exceeding the 131072-token model context.*Restart"
         ):
-            main.run_chat(Path("/cache"), context_size=4096, gpu_layers=0)
+            main.run_chat(
+                Path("/cache"),
+                main.Device.CPU,
+                16,
+                read_input=lambda _: "Hi",
+            )
+
+        model.generate.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -1,23 +1,51 @@
 # Quadratic Voting
 
-This package contains local tools for the quadratic-voting experiments.
+This package contains local tools for the quadratic-voting experiments. The
+Gemma runner uses Transformers and PyTorch directly; it does not invoke
+llama.cpp or another external inference executable.
 
-## Gemma 4 E2B Chat
-
-The command-line runner downloads Google's official instruction-tuned Gemma 4
-E2B QAT Q4_0 GGUF and starts an interactive text conversation with the
-Nix-provided CUDA-enabled `llama-cli`.
+## Setup
 
 Run these commands from the repository root:
 
 ```console
-nix develop
+uv python install 3.12
 uv sync --locked
+```
+
+## Gemma 4 E2B Chat
+
+Download Google's complete pinned instruction-tuned QAT checkpoint:
+
+```console
 uv run python -m quadratic_voting.main download
+```
+
+Start an interactive text conversation:
+
+```console
 uv run python -m quadratic_voting.main chat
 ```
 
-The download uses the Hugging Face Hub cache. To select another cache directory:
+The default `auto` device lets Accelerate place model modules on available GPU
+and CPU memory. Override the device or maximum response length when needed:
+
+```console
+uv run python -m quadratic_voting.main chat \
+  --device cuda \
+  --max-new-tokens 128
+```
+
+Enter `/exit` to leave the conversation.
+
+Explicit `--device cuda` requires at least 12 GB of free GPU memory as a
+conservative loading budget. Use `--device auto` to permit GPU/CPU placement on
+smaller GPUs. Reducing `--max-new-tokens` cannot compensate when the weights do
+not fit. The runner also rejects conversations that exceed the model's
+131,072-token context.
+
+To select another Hugging Face cache directory, put the global option before
+the subcommand:
 
 ```console
 uv run python -m quadratic_voting.main \
@@ -25,42 +53,37 @@ uv run python -m quadratic_voting.main \
   download
 ```
 
-The chat command defaults to an 8,192-token context and requests GPU offload for
-99 layers. llama.cpp limits the actual offload to the layers available in the
-model. Use `--gpu-layers 0` for CPU-only execution:
-
-```console
-uv run python -m quadratic_voting.main chat \
-  --context-size 4096 \
-  --gpu-layers 0
-```
-
-Enter `/exit` to leave the interactive conversation.
-
 ## Pinned Artifact
 
-- Repository: `google/gemma-4-E2B-it-qat-q4_0-gguf`
-- Revision: `675cff42a74c774d6cb76f76d8eacb49b48c9b93`
-- File: `gemma-4-E2B_q4_0-it.gguf`
+- Repository: `google/gemma-4-E2B-it-qat-q4_0-unquantized`
+- Revision: `6befbaca7398925921802abd1f277b495b78b738`
+- Runtime: Transformers on PyTorch
+- Weight dtype: BF16
 
-The current runner supports only this official instruction-tuned Q4_0 artifact.
-Base/non-instruction-tuned support is deferred because Google does not publish
-an official base Q4_0 artifact matching this workflow.
+The checkpoint was trained for later Q4_0 conversion, but its stored tensors
+are not packed Q4_0 weights. The runner currently uses the high-precision
+checkpoint directly to preserve the standard PyTorch model and activation
+interfaces.
 
 ## Validation
 
-Run the unit and integration smoke tests inside the Nix development shell:
-
 ```console
-nix develop --command uv run python -m unittest discover -v
+uv run python -m unittest discover -v
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy quadratic_voting
 ```
 
-Run the CUDA matrix-multiplication smoke test separately:
+On an NVIDIA system, also run:
 
 ```console
-nix develop --command uv run python quadratic_voting/test_cuda.py
+uv run python quadratic_voting/test_cuda.py
 ```
 
-The test suite does not download the multi-gigabyte model. A complete local
-acceptance test still requires the `download` command followed by an interactive
-`chat` session.
+The automated tests do not download or load the full model. Complete acceptance
+requires a successful download and interactive chat session on the target
+device.
+
+Set `RUN_HF_INTEGRATION=1` when running the test suite to verify the pinned
+configuration and tokenizer metadata against the Hugging Face Hub without
+downloading model weights.

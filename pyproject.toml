@@ -11,10 +11,13 @@ dependencies = [
     "numpy>=2.5.2",
     "torch>=2.13.0",
     "transformers>=5.5.0",
+    "pandas>=2.3.0",
+    "pyarrow>=20.0.0",
 ]
 
 [dependency-groups]
 dev = [
     "mypy==1.20.1",
+    "pandas-stubs>=2.3.0",
     "ruff==0.15.14",
 ]

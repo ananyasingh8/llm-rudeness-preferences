@@ -1,0 +1,47 @@
+"""Closed model registry and provider-independent text generation contracts."""
+
+from llm_runtime.registry import (
+    LocalTransformersRoute,
+    ModelRoute,
+    ModelRouteError,
+    OpenRouterRoute,
+    RouteAvailability,
+    registered_routes,
+    resolve_route,
+)
+from llm_runtime.types import (
+    Capability,
+    ChatMessage,
+    GenerationError,
+    GenerationFailureKind,
+    GenerationSettings,
+    MAX_RETRY_DELAY_SECONDS,
+    MessageRole,
+    ModelId,
+    ProviderId,
+    QuantizationId,
+    RuntimeId,
+    TextGenerator,
+)
+
+__all__ = [
+    "Capability",
+    "ChatMessage",
+    "GenerationError",
+    "GenerationFailureKind",
+    "GenerationSettings",
+    "MAX_RETRY_DELAY_SECONDS",
+    "LocalTransformersRoute",
+    "MessageRole",
+    "ModelId",
+    "ModelRoute",
+    "ModelRouteError",
+    "OpenRouterRoute",
+    "ProviderId",
+    "QuantizationId",
+    "RouteAvailability",
+    "RuntimeId",
+    "TextGenerator",
+    "registered_routes",
+    "resolve_route",
+]

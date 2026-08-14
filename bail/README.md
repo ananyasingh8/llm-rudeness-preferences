@@ -1,41 +1,39 @@
 # Bail workstream: rudeness-augmented BailBench
 
-Materials brought over from the `personabailstudy` repo: the pipeline that
-augments BailBench prompts with rudeness, plus the resulting dataset.
+The augmentation pipeline assigns one of 12 seeded Culpeper impoliteness
+formulae to each BailBench row, asks an injected `TextGenerator` to rewrite the
+prompt, parses `<augmented>` tags, and preserves bounded retries, concurrency,
+Parquet resume, and committed outputs.
 
-## Data (`data/`)
+## Run
 
-- `bailBench.csv` — original BailBench (1630 rows: `content`, `subcategory`,
-  `category`), from safety-research's bail-study repo for the paper
-  *"The LLM Has Left The Chat"*.
-- `bailbench_augmented.csv` / `.parquet` — every BailBench prompt rewritten to
-  be rude toward the assistant. All 1630 rows augmented successfully. Columns:
-  source columns + `bailbench_id`, `rudeness_type` (1–12), `rudeness_name`,
-  `original_prompt`, `augmented_prompt`, `raw_response`.
-- `augment_smoke_10.csv` — 10-row smoke-test output kept for reference.
+From the repository root:
 
-## How the augmentation works
-
-Each row is assigned one of 12 conventionalised impoliteness formulae
-(adapted from Culpeper 2011, *Impoliteness: Using Language to Cause Offence*,
-pp. 135–136) by a seeded RNG (`AUGMENT_SEED = 42`) — the rewriting model never
-picks the formula. An OpenRouter model
-(`cognitivecomputations/dolphin-mistral-24b-venice-edition`, chosen because it
-will rewrite BailBench's harmful-request prompts rather than refuse) rewrites
-the prompt applying only that formula, changing the interpersonal register but
-not the task content. The full codebook and constraints live in
-[prompts/rudeness_augmentation.py](prompts/rudeness_augmentation.py).
-
-## Re-running
-
-Only needed to regenerate/extend the committed dataset:
-
-```bash
-cd bail
+```console
+uv sync --locked
 export OPENROUTER_API_KEY=sk-or-...
-python -m src.augment_bailbench
+uv run python -m bail.src.augment_bailbench
 ```
 
-Resume is automatic (rows already in the parquet are skipped; failed rows are
-retried). Set `AUGMENT_USE_MOCK = True` in [config.py](config.py) for a
-deterministic no-API dry run.
+Only `OPENROUTER_API_KEY` is read. There is no local secrets-file fallback. Set
+`AUGMENT_USE_MOCK = True` in `bail/config.py` for a deterministic no-network
+run.
+
+Resume filtering happens before credentials or HTTP clients are constructed.
+Only transport failures and HTTP 408/429/selected 5xx responses are retried;
+authentication, validation, malformed success payloads, and programmer errors
+become `API_ERROR` rows immediately. Internally created HTTP clients are closed
+after each batch, while injected clients remain caller-owned.
+
+The real route is the registered OpenRouter model
+`dolphin-mistral-24b-venice` with quantization `none`, because OpenRouter does
+not disclose an enforceable upstream quantization. Remote generation has no
+activation access. Adding or changing a model requires a reviewed entry in
+`llm_runtime.registry` and adapter sanity test; do not add raw URLs, model slugs,
+or provider SDK construction to the bail pipeline.
+
+## Data
+
+- `data/bailBench.csv`: 1,630 source prompts.
+- `data/bailbench_augmented.csv` and `.parquet`: committed augmented dataset.
+- `data/augment_smoke_10.csv`: small reference output.

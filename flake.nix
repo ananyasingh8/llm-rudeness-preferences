@@ -45,6 +45,7 @@
         pkgs_.uv                                    # Package installer
         pkgs_.mypy                                  # Type checker
         pkgs_.${pythonAttr + "Packages"}.ruff       # Linter/formatter
+        (pkgs_.llama-cpp.override { cudaSupport = true; }) # Local CUDA GGUF inference
       ];
 
       # Native build dependencies (C libraries, compilers)

@@ -1,7 +1,6 @@
-import torch
-
-
 def main() -> None:
+    import torch
+
     print(f"PyTorch: {torch.__version__}")
     print(f"PyTorch CUDA runtime: {torch.version.cuda}")
     print(f"CUDA available: {torch.cuda.is_available()}")

@@ -136,4 +136,41 @@ result is also interpretable.
 
 ## Amendments
 
-(none yet)
+### A1 (2026-08-14, before any experimental runs): models, scale, and sampling params
+
+Logged before any bail runs were executed; the augmented dataset already
+existed. Reasons: cost (Opus 5 too expensive for the sprint budget; paid
+Gemma is ~$0.08/$0.35 per M tokens so the full 1630 is affordable) and API
+constraints (Claude Sonnet 5 rejects explicit sampling parameters).
+
+1. **Claude Opus 5 is deferred** (may return post-sprint). Replaced by
+   **Claude Sonnet 5** (`claude-sonnet-5`, Anthropic API; intro pricing
+   through 2026-08-31).
+2. **Gemma switches from the `:free` to the paid OpenRouter endpoint**:
+   `google/gemma-4-31b-it`. The paid endpoint supports native function
+   calling, resolving the tool-support risk flagged above.
+3. **The design is now asymmetric per model:**
+   - **Gemma**: all **1630** prompts × **10** samples per cell (as in the
+     original spec, but full dataset instead of the 200 subsample).
+   - **Sonnet 5**: the **200-prompt** stratified subsample (seed 42, drawn
+     exactly as specified above — a strict subset of Gemma's prompts) ×
+     **5** samples per cell.
+   Consequences, stated up front: the primary hypothesis is within-model, so
+   each model's paired Wilcoxon test (Holm-corrected across the 6
+   model × method cells, as specified) is unaffected. Cross-model
+   comparisons are downgraded to descriptive (reported with CIs, not
+   tested). Rudeness-type and category breakdowns are well-powered only for
+   Gemma. Sonnet per-prompt bail rates are coarse (multiples of 0.2), which
+   increases Wilcoxon ties on low-base-rate prompts and reduces sensitivity
+   to small effects for Sonnet cells.
+4. **Temperature: "1.0" is replaced by "provider default sampling".**
+   Sonnet 5 returns a 400 for explicit `temperature`; we therefore omit
+   sampling parameters entirely on both models and sample at each model's
+   default distribution. The estimand rationale (nonzero-temperature
+   sampling to estimate per-prompt bail probabilities) is unchanged; for
+   Gemma the default is temperature 1.0, so this is a no-op.
+5. **Sonnet 5 thinking is disabled** (`thinking: {"type": "disabled"}`) for
+   comparability with the paper's non-thinking models and to keep wellbeing
+   responses clean. Known caveat: thinking-off may make Sonnet slightly less
+   tool-eager, which could depress its bail-tool rate; noted as a
+   limitation for the Sonnet tool cell. Gemma is run without reasoning mode.

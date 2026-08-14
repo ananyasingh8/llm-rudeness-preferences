@@ -1,4 +1,11 @@
+<<<<<<< HEAD
 __pycache__/
 *.pyc
 secrets_local.py
 .DS_Store
+=======
+.venv/
+.direnv/
+__pycache__/
+*.py[cod]
+>>>>>>> 579ac9a2a885342568d34bce87035bfbe070cdba

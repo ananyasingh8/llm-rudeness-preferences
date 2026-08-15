@@ -255,7 +255,7 @@ def _download_remedy(route: LocalTransformersRoute, cache_dir: Path) -> str:
     if route.loader is LocalLoaderKind.BITSANDBYTES_4BIT:
         return (
             "Run `uv run python -m emotion_probing.main --experiment "
-            f"convabuse-31b --cache-dir {cache_argument} download` "
+            f"convabuse-31b-local-quant --cache-dir {cache_argument} download` "
             "after accepting any applicable Gemma license and authenticating "
             "with Hugging Face, then retry the same run command."
         )
@@ -405,15 +405,57 @@ def _placement_for_model(
     raw_map = getattr(model, "hf_device_map", None)
     if not isinstance(raw_map, dict) or not raw_map:
         if route.loader is LocalLoaderKind.BITSANDBYTES_4BIT:
-            raise TransformersRuntimeError(
-                "BitsAndBytes placement validation failed in "
-                "llm_runtime.transformers._placement_for_model immediately after "
-                "model loading because Transformers did not expose a non-empty "
-                "hf_device_map. "
-                "The caller cannot verify that all weights stayed on CUDA, so the "
-                "experiment will not start. Use compatible locked dependencies and "
-                "retry; do not bypass placement validation."
+            named_parameters = getattr(model, "named_parameters", None)
+            named_buffers = getattr(model, "named_buffers", None)
+            if not callable(named_parameters) or not callable(named_buffers):
+                raise TransformersRuntimeError(
+                    "BitsAndBytes placement validation failed in "
+                    "llm_runtime.transformers._placement_for_model immediately "
+                    "after model loading because Transformers exposed neither a "
+                    "non-empty hf_device_map nor inspectable named tensors. The "
+                    "caller cannot verify that all weights stayed on CUDA, so the "
+                    "experiment will not start. Use compatible locked dependencies "
+                    "and retry; do not bypass placement validation."
+                )
+            tensor_devices: set[str] = set()
+            invalid_tensors: list[tuple[str, str]] = []
+            tensor_count = 0
+            for kind, tensors in (
+                ("parameter", named_parameters()),
+                ("buffer", named_buffers()),
+            ):
+                for name, tensor in tensors:
+                    tensor_count += 1
+                    target = str(tensor.device)
+                    tensor_devices.add(target)
+                    if target not in {"cuda", "cuda:0"} and len(invalid_tensors) < 10:
+                        invalid_tensors.append((f"{kind}:{name}", target))
+            if tensor_count == 0:
+                raise TransformersRuntimeError(
+                    "BitsAndBytes placement validation failed in "
+                    "llm_runtime.transformers._placement_for_model immediately "
+                    "after model loading because Transformers exposed neither a "
+                    "non-empty hf_device_map nor any named parameters or buffers. "
+                    "The caller cannot verify CUDA-only placement, so activation "
+                    "probing will not start."
+                )
+            if invalid_tensors:
+                details = ", ".join(
+                    f"{name}={target}" for name, target in invalid_tensors
+                )
+                raise TransformersRuntimeError(
+                    "BitsAndBytes placement validation failed in "
+                    "llm_runtime.transformers._placement_for_model immediately "
+                    "after model loading because direct tensor inspection found "
+                    f"non-CUDA placement: {details}. Activation probing has not "
+                    "started and silent CPU/disk/meta offload is not accepted for "
+                    "this reviewed route. Free enough RTX 4090 memory and retry."
+                )
+            verified = tuple(
+                ("<all-parameters-and-buffers>", target)
+                for target in sorted(tensor_devices)
             )
+            return DevicePlacement(requested, verified, (), ())
         return DevicePlacement(requested, (), (), ())
 
     normalized = tuple(

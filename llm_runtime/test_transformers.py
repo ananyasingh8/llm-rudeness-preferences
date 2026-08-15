@@ -215,7 +215,7 @@ class TransformersRuntimeTests(unittest.TestCase):
     @patch("llm_runtime.transformers.AutoModelForCausalLM.from_pretrained")
     @patch("llm_runtime.transformers.AutoTokenizer.from_pretrained")
     @patch("llm_runtime.transformers.snapshot_download", return_value="/cache/snapshot")
-    def test_bitsandbytes_empty_device_map_is_rejected_after_load(
+    def test_bitsandbytes_missing_device_map_verifies_named_tensors(
         self,
         _snapshot: MagicMock,
         _tokenizer: MagicMock,
@@ -232,9 +232,56 @@ class TransformersRuntimeTests(unittest.TestCase):
                 QuantizationId.BITSANDBYTES_FP4,
             ),
         )
-        load_model.return_value.hf_device_map = {}
+        model = load_model.return_value
+        model.hf_device_map = {}
+        parameter = MagicMock()
+        parameter.device = torch.device("cuda:0")
+        buffer = MagicMock()
+        buffer.device = torch.device("cuda:0")
+        model.named_parameters.return_value = [("model.layers.40.weight", parameter)]
+        model.named_buffers.return_value = [("model.rotary.inv_freq", buffer)]
+
+        runtime = create_transformers_runtime(route, cache_dir=Path("/cache"))
+
+        self.assertEqual(
+            runtime.placement.resolved_device_map,
+            (("<all-parameters-and-buffers>", "cuda:0"),),
+        )
+        self.assertFalse(runtime.placement.has_cpu_or_offload)
+
+    @patch("llm_runtime.transformers.BitsAndBytesConfig")
+    @patch("llm_runtime.transformers.torch.cuda.is_available", return_value=True)
+    @patch("llm_runtime.transformers.importlib.util.find_spec", return_value=object())
+    @patch("llm_runtime.transformers.AutoModelForCausalLM.from_pretrained")
+    @patch("llm_runtime.transformers.AutoTokenizer.from_pretrained")
+    @patch("llm_runtime.transformers.snapshot_download", return_value="/cache/snapshot")
+    def test_bitsandbytes_missing_device_map_rejects_cpu_tensor(
+        self,
+        _snapshot: MagicMock,
+        _tokenizer: MagicMock,
+        load_model: MagicMock,
+        _find_spec: MagicMock,
+        _cuda_available: MagicMock,
+        _bnb_config: MagicMock,
+    ) -> None:
+        route = cast(
+            LocalTransformersRoute,
+            resolve_route(
+                ModelId.GEMMA_4_31B_IT,
+                ProviderId.LOCAL,
+                QuantizationId.BITSANDBYTES_FP4,
+            ),
+        )
+        model = load_model.return_value
+        model.hf_device_map = None
+        parameter = MagicMock()
+        parameter.device = torch.device("cpu")
+        model.named_parameters.return_value = [("model.layers.40.weight", parameter)]
+        model.named_buffers.return_value = []
+
         with self.assertRaisesRegex(
-            TransformersRuntimeError, "non-empty hf_device_map"
+            TransformersRuntimeError,
+            "direct tensor inspection found non-CUDA placement.*parameter:model.layers.40.weight=cpu",
         ):
             create_transformers_runtime(route, cache_dir=Path("/cache"))
 
@@ -362,7 +409,7 @@ class TransformersRuntimeTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             TransformersRuntimeError,
-            "emotion_probing.main --experiment convabuse-31b --cache-dir "
+            "emotion_probing.main --experiment convabuse-31b-local-quant --cache-dir "
             "/cache/models download.*same run command",
         ):
             create_transformers_runtime(
@@ -423,7 +470,7 @@ class TransformersRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(
             TransformersRuntimeError,
             "download_transformers_artifact.*google/gemma-4-31B-it.*"
-            "emotion_probing.main --experiment convabuse-31b --cache-dir "
+            "emotion_probing.main --experiment convabuse-31b-local-quant --cache-dir "
             "/cache/models download",
         ):
             download_transformers_artifact(route, Path("/cache/models"))

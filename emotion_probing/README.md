@@ -13,14 +13,14 @@ the model is about to reply, the analog of the ":" after "Assistant" in Anthropi
 Concepts in a Large Language Model" paper. That activation is compared against pre-extracted
 **emotion vectors** by cosine similarity: one score per emotion per input.
 
-There are two experiment configurations (`EXPERIMENTS` in [main.py](main.py)):
+There are three experiment configurations (`EXPERIMENTS` in [main.py](main.py)):
 
-| | `bailbench-2b` | `convabuse-31b` (default) |
-|---|---|---|
-| Model | google/gemma-2-2b-it (bf16) | google/gemma-4-31B-it (BitsAndBytes FP4 at load time) |
-| Emotion vectors | EmotionScope, 20 emotions, layer 22 | [gemotions](https://huggingface.co/dejanseo/gemotions), 171 emotions, layer 40 |
-| Dataset | 1,630 synthetic normal/rude prompt pairs (from `../bail/data/`) | 4,185 real user-bot conversation snippets, human-annotated (ConvAbuse) |
-| Comparison | paired: rude − normal on identical content | between groups: abusive vs non-abusive, by severity/type/target |
+| | `bailbench-2b` | `convabuse-31b` (default) | `convabuse-31b-local-quant` |
+|---|---|---|---|
+| Model | google/gemma-2-2b-it (bf16) | google/gemma-4-31B-it (W4A16 Compressed Tensors) | google/gemma-4-31B-it (BitsAndBytes FP4 at load time) |
+| Emotion vectors | EmotionScope, 20 emotions, layer 22 | [gemotions](https://huggingface.co/dejanseo/gemotions), 171 emotions, layer 40 | Same gemotions vectors |
+| Dataset | 1,630 synthetic normal/rude prompt pairs (from `../bail/data/`) | 4,185 real user-bot conversation snippets, human-annotated (ConvAbuse) | Same ConvAbuse dataset |
+| Comparison | paired: rude − normal on identical content | between groups: abusive vs non-abusive, by severity/type/target | Same comparison under extraction-like local quantization |
 
 Emotion vectors are model-specific, so each configuration pairs a model with vectors extracted
 from that exact model. Models are resolved through the shared [llm_runtime](../llm_runtime/)
@@ -42,9 +42,9 @@ snippet, feeding the conversation context as real chat turns:
 
 ## How to run
 
-### Reviewed ConvAbuse route
+### Reviewed local-quant ConvAbuse route
 
-`convabuse-31b` is closed to one route: `google/gemma-4-31B-it` revision
+`convabuse-31b-local-quant` is closed to one route: `google/gemma-4-31B-it` revision
 `842da3794eaa0b77d5f08bae87a17459d91ff475`, loaded with
 `BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="fp4",
 bnb_4bit_compute_dtype=torch.bfloat16,
@@ -60,7 +60,7 @@ One-time setup:
 ```
 uv sync --locked
 hf auth login                    # accept the applicable Gemma license first
-uv run python -m emotion_probing.main --experiment convabuse-31b download
+uv run python -m emotion_probing.main --experiment convabuse-31b-local-quant download
 uv run python -m emotion_probing.main --experiment bailbench-2b download    # ~5 GB
 ```
 
@@ -76,6 +76,7 @@ Run and analyze:
 uv run python -m emotion_probing.main run                      # convabuse-31b (default)
 uv run python -m emotion_probing.main run --limit 10           # quick smoke test
 uv run python -m emotion_probing.main run --limit 10 --resume  # resume that smoke run
+uv run python -m emotion_probing.main --experiment convabuse-31b-local-quant run
 uv run python -m emotion_probing.main --experiment bailbench-2b run
 uv run python -m emotion_probing.analyze                       # analyzes the latest run
 uv run python -m emotion_probing.analyze --run results/<folder>
@@ -84,16 +85,49 @@ uv run python -m emotion_probing.analyze --run results/<folder>
 The exact manually authorized RTX 4090 smoke command is:
 
 ```console
-uv run python -m emotion_probing.main --experiment convabuse-31b run --device cuda --limit 1
+uv run python -m emotion_probing.main --experiment convabuse-31b-local-quant run --device cuda --limit 1
 ```
 
 The pinned base repository download/cache needs **at least 60 GB of disk** (allow
 additional temporary/cache headroom); runtime quantization does not make the Hub
-download a pre-quantized 18 GB artifact. The target is a 24 GB RTX 4090 with the
-entire reviewed route on CUDA. Whether this exact lock fits is **pending measured
-acceptance** from the separately authorized smoke run. The runtime rejects CPU or
-disk placement rather than silently offloading, changing precision, or selecting
+download a pre-quantized 18 GB artifact. The exact locked route passed a measured
+one-example smoke run on a 24 GB RTX 4090. The runtime rejects CPU or disk
+placement rather than silently offloading, changing precision, or selecting
 another artifact.
+
+### Why local quantization?
+
+The official Gemma 4 31B BF16 checkpoint needs roughly 60 GB just for weights,
+so it cannot run wholly on a 24 GB RTX 4090. Loading that pinned checkpoint with
+BitsAndBytes FP4 reduces the measured CUDA footprint to 19,802,113,536 bytes
+allocated (18.44 GiB) and 19,862,126,592 bytes reserved (18.50 GiB) for the
+one-example smoke run. All named parameters and buffers were verified on
+`cuda:0`; no CPU or disk offload was used.
+
+This route is separate because quantization is part of the scientific
+provenance. The vendored gemotions vectors were extracted from
+`google/gemma-4-31B-it` loaded with BitsAndBytes 4-bit weights and BF16 compute.
+Google's W4A16 Compressed Tensors checkpoint also fits this GPU, but it uses a
+different quantization representation and is retained as `convabuse-31b` rather
+than being treated as activation-equivalent. The local route explicitly uses
+FP4, BF16 compute, UINT8 storage, and no double quantization. It approximates the
+documented extraction conditions, but exact numerical replication is not
+claimed because the historical package versions, omitted defaults, CUDA
+environment, and model revision were not recorded.
+
+GGUF is likewise not structurally incompatible with the vectors: the same
+architecture still has a 5,376-wide layer-40 residual stream. It is not assumed
+to be numerically interchangeable, however, because GGUF Q4 and llama.cpp use
+different quantized weights, kernels, and graph tensor names. GGUF probing would
+need a custom activation callback plus cross-runtime validation, or vectors
+re-extracted from the exact GGUF runtime.
+
+Finally, this experiment does not reproduce the full gemotions extraction
+pipeline. It reuses the vendored layer-40 vectors and clusters, captures the
+response-start activation for ConvAbuse prompts, and computes cosine scores. A
+full replication would regenerate the vectors from the emotion-story and
+neutral corpora, repeat denoising and clustering, and validate the newly
+extracted directions before applying them to ConvAbuse.
 
 **Every run gets its own folder** — `results/<timestamp>_<experiment>/` with `scores.csv`,
 `run_info.json` (exact route, model/vector revisions, quantization recipe,

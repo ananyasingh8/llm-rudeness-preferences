@@ -242,11 +242,13 @@ must not be treated as numerically equivalent. The repository is not gated.
   rejects CPU/disk placement rather than silently offloading
 - Capabilities: text generation and local activations
 
-This route is the closed `convabuse-31b` probing route. Cache-only construction
+This route is the closed `convabuse-31b-local-quant` probing route. Cache-only construction
 preserves the real model and tokenizer. The full base repository requires 60+ GB
 of download/cache/disk capacity even though weights are quantized during load.
-Fit on the target 24 GB RTX 4090 remains pending a separately authorized measured
-smoke run; no measured fit or numerical-equivalence claim is made here.
+The exact locked route passed a one-example smoke run on a 24 GB RTX 4090 at
+18.44 GiB peak allocated and 18.50 GiB peak reserved CUDA memory, with every
+named parameter and buffer verified on `cuda:0`. This does not establish
+numerical equivalence with the historical extraction environment.
 
 ### BF16 Gemma 2 Route
 

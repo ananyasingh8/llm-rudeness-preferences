@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from emotion_probing.main import (
+    DEFAULT_EXPERIMENT,
     EXPERIMENTS,
     ExperimentId,
     ProbeError,
@@ -29,6 +30,7 @@ from emotion_probing.main import (
     validate_prompt_bounds_before_iteration,
     validate_probe_setup,
 )
+from llm_runtime import QuantizationId
 from llm_runtime.transformers import Device, DevicePlacement
 
 
@@ -114,6 +116,17 @@ def fake_runtime(tokens: int, *, width: int = 5_376, fail: bool = False) -> Any:
 
 
 class EmotionProbeTests(unittest.TestCase):
+    def test_convabuse_flags_keep_prequantized_and_local_routes_distinct(self) -> None:
+        self.assertIs(DEFAULT_EXPERIMENT, ExperimentId.CONVABUSE_31B)
+        self.assertIs(
+            EXPERIMENTS[ExperimentId.CONVABUSE_31B].quantization_id,
+            QuantizationId.W4A16_COMPRESSED_TENSORS,
+        )
+        self.assertIs(
+            EXPERIMENTS[ExperimentId.CONVABUSE_31B_LOCAL_QUANT].quantization_id,
+            QuantizationId.BITSANDBYTES_FP4,
+        )
+
     def _fingerprints(self) -> dict[str, object]:
         return {
             "dataset_manifest_sha256": "dataset-hash",
@@ -130,7 +143,7 @@ class EmotionProbeTests(unittest.TestCase):
         }
 
     def _provenance(self, runtime: Any, limit: int | None = 1) -> dict[str, object]:
-        config = EXPERIMENTS[ExperimentId.CONVABUSE_31B]
+        config = EXPERIMENTS[ExperimentId.CONVABUSE_31B_LOCAL_QUANT]
         with patch(
             "emotion_probing.main.importlib.metadata.version", return_value="locked"
         ):
@@ -252,7 +265,7 @@ class EmotionProbeTests(unittest.TestCase):
     def test_setup_and_provenance_include_route_placement_and_quantization(
         self,
     ) -> None:
-        config = EXPERIMENTS[ExperimentId.CONVABUSE_31B]
+        config = EXPERIMENTS[ExperimentId.CONVABUSE_31B_LOCAL_QUANT]
         route = resolve_probe_route(config)
         runtime = fake_runtime(2)
         validate_probe_setup(runtime, config, torch.zeros((171, 5_376)))  # type: ignore[arg-type]
@@ -288,7 +301,7 @@ class EmotionProbeTests(unittest.TestCase):
         self.assertTrue(provenance["inference_mode"])
 
     def test_setup_rejects_model_or_vector_width_before_iteration(self) -> None:
-        config = EXPERIMENTS[ExperimentId.CONVABUSE_31B]
+        config = EXPERIMENTS[ExperimentId.CONVABUSE_31B_LOCAL_QUANT]
         with self.assertRaisesRegex(ProbeError, "loaded model reports width 5375"):
             validate_probe_setup(
                 fake_runtime(2, width=5_375),  # type: ignore[arg-type]
@@ -303,7 +316,7 @@ class EmotionProbeTests(unittest.TestCase):
             )
 
     def test_compatible_resume_preserves_original_provenance_and_peaks(self) -> None:
-        config = EXPERIMENTS[ExperimentId.CONVABUSE_31B]
+        config = EXPERIMENTS[ExperimentId.CONVABUSE_31B_LOCAL_QUANT]
         runtime = fake_runtime(2)
         provenance = self._provenance(runtime)
         provenance |= {
@@ -315,7 +328,7 @@ class EmotionProbeTests(unittest.TestCase):
         columns = ["example_id", "n_tokens", "score_emotion"]
         with tempfile.TemporaryDirectory() as directory:
             results = Path(directory)
-            run_dir = results / "2026-01-01_000000_convabuse-31b"
+            run_dir = results / "2026-01-01_000000_convabuse-31b-local-quant"
             run_dir.mkdir()
             info_path = run_dir / "run_info.json"
             scores_path = run_dir / "scores.csv"
@@ -339,13 +352,13 @@ class EmotionProbeTests(unittest.TestCase):
             self.assertEqual(scores_path.read_bytes(), before_scores)
 
     def test_resume_mismatch_is_actionable_and_leaves_files_unchanged(self) -> None:
-        config = EXPERIMENTS[ExperimentId.CONVABUSE_31B]
+        config = EXPERIMENTS[ExperimentId.CONVABUSE_31B_LOCAL_QUANT]
         runtime = fake_runtime(2)
         previous = self._provenance(runtime)
         columns = ["example_id", "n_tokens", "score_emotion"]
         with tempfile.TemporaryDirectory() as directory:
             results = Path(directory)
-            run_dir = results / "2026-01-01_000000_convabuse-31b"
+            run_dir = results / "2026-01-01_000000_convabuse-31b-local-quant"
             run_dir.mkdir()
             info_path = run_dir / "run_info.json"
             scores_path = run_dir / "scores.csv"
@@ -384,7 +397,7 @@ class EmotionProbeTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as directory:
             results = Path(directory)
-            run_dir = results / "2026-01-01_000000_convabuse-31b"
+            run_dir = results / "2026-01-01_000000_convabuse-31b-local-quant"
             run_dir.mkdir()
             info_path = run_dir / "run_info.json"
             scores_path = run_dir / "scores.csv"
@@ -428,7 +441,7 @@ class EmotionProbeTests(unittest.TestCase):
                 patch("emotion_probing.main.reset_cuda_peaks") as reset,
             ):
                 run_probe(
-                    ExperimentId.CONVABUSE_31B,
+                    ExperimentId.CONVABUSE_31B_LOCAL_QUANT,
                     Path("/cache"),
                     Device.CUDA,
                     1,
@@ -460,7 +473,7 @@ class EmotionProbeTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             results = Path(directory)
-            run_dir = results / "2026-01-01_000000_convabuse-31b"
+            run_dir = results / "2026-01-01_000000_convabuse-31b-local-quant"
             run_dir.mkdir()
             info_path = run_dir / "run_info.json"
             scores_path = run_dir / "scores.csv"
@@ -504,7 +517,7 @@ class EmotionProbeTests(unittest.TestCase):
                 ),
             ):
                 run_probe(
-                    ExperimentId.CONVABUSE_31B,
+                    ExperimentId.CONVABUSE_31B_LOCAL_QUANT,
                     Path("/cache"),
                     Device.CUDA,
                     2,
@@ -559,7 +572,7 @@ class EmotionProbeTests(unittest.TestCase):
                 self.assertEqual(scores_path.read_bytes(), before_scores)
 
     def test_input_fingerprints_follow_actual_task_vector_and_probe_bytes(self) -> None:
-        config = EXPERIMENTS[ExperimentId.CONVABUSE_31B]
+        config = EXPERIMENTS[ExperimentId.CONVABUSE_31B_LOCAL_QUANT]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             package = root / "emotion_probing"
@@ -689,8 +702,10 @@ class EmotionProbeTests(unittest.TestCase):
             "emotion_probing.main.importlib.metadata.version", return_value="locked"
         ):
             provenance = build_run_provenance(
-                EXPERIMENTS[ExperimentId.CONVABUSE_31B],
-                resolve_probe_route(EXPERIMENTS[ExperimentId.CONVABUSE_31B]),
+                EXPERIMENTS[ExperimentId.CONVABUSE_31B_LOCAL_QUANT],
+                resolve_probe_route(
+                    EXPERIMENTS[ExperimentId.CONVABUSE_31B_LOCAL_QUANT]
+                ),
                 runtime,
                 1,
                 fingerprints,
@@ -730,11 +745,13 @@ class EmotionProbeTests(unittest.TestCase):
             "cluster_snapshot_sha256": hashlib.sha256(canonical).hexdigest(),
         }
         with tempfile.TemporaryDirectory() as directory:
-            run_dir = Path(directory) / "2026-01-01_000000_convabuse-31b"
+            run_dir = Path(directory) / "2026-01-01_000000_convabuse-31b-local-quant"
             run_dir.mkdir()
             with patch("emotion_probing.main.load_clusters", return_value=payload):
                 _stage_new_run(
-                    EXPERIMENTS[ExperimentId.CONVABUSE_31B], run_dir, provenance
+                    EXPERIMENTS[ExperimentId.CONVABUSE_31B_LOCAL_QUANT],
+                    run_dir,
+                    provenance,
                 )
             self.assertEqual((run_dir / "clusters.json").read_bytes(), canonical)
             saved = json.loads((run_dir / "run_info.json").read_text())
@@ -758,7 +775,7 @@ class EmotionProbeTests(unittest.TestCase):
         for label, csv_text in malformed.items():
             with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
                 results = Path(directory)
-                run_dir = results / "2026-01-01_000000_convabuse-31b"
+                run_dir = results / "2026-01-01_000000_convabuse-31b-local-quant"
                 run_dir.mkdir()
                 info_path = run_dir / "run_info.json"
                 scores_path = run_dir / "scores.csv"
@@ -794,7 +811,7 @@ class EmotionProbeTests(unittest.TestCase):
                     self.assertRaisesRegex(ProbeError, "Resume CSV validation failed"),
                 ):
                     run_probe(
-                        ExperimentId.CONVABUSE_31B,
+                        ExperimentId.CONVABUSE_31B_LOCAL_QUANT,
                         Path("/cache"),
                         Device.CUDA,
                         1,

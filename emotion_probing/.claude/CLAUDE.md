@@ -20,15 +20,15 @@ token** after `apply_chat_template(..., add_generation_prompt=True)` (for Gemma 
 `\n` after the model-turn marker — the analog of the paper's ":" after "Assistant"); cosine
 against pre-extracted emotion vectors.
 
-Two configurations in `EXPERIMENTS` (`main.py`), each pairing a model route with vectors
+Three configurations in `EXPERIMENTS` (`main.py`), each pairing a model route with vectors
 extracted from that exact model:
 
-| | bailbench-2b | convabuse-31b (default) |
-|---|---|---|
-| Route | GEMMA_2_2B_IT / LOCAL / BF16 | GEMMA_4_31B_IT / LOCAL / BITSANDBYTES_FP4 |
-| Vectors | EmotionScope .pt, 20 emotions, layer 22 | gemotions npz, 171 emotions, layer 40 |
-| Dataset | bail/data/bailbench_augmented.csv (paired) | data/ConvAbuseEMNLPfull.csv (between-groups) |
-| Analysis | paired deltas (rude − normal) | group shifts vs non-abusive baseline |
+| | bailbench-2b | convabuse-31b (default) | convabuse-31b-local-quant |
+|---|---|---|---|
+| Route | GEMMA_2_2B_IT / LOCAL / BF16 | GEMMA_4_31B_IT / LOCAL / W4A16_COMPRESSED_TENSORS | GEMMA_4_31B_IT / LOCAL / BITSANDBYTES_FP4 |
+| Vectors | EmotionScope .pt, 20 emotions, layer 22 | gemotions npz, 171 emotions, layer 40 | same gemotions vectors |
+| Dataset | bail/data/bailbench_augmented.csv (paired) | data/ConvAbuseEMNLPfull.csv (between-groups) | same ConvAbuse data |
+| Analysis | paired deltas (rude − normal) | group shifts vs non-abusive baseline | same comparison under local quantization |
 
 ## Technical implementation
 
@@ -149,7 +149,7 @@ without torch/transformers — useful for quick local checks.
    abuse-at-the-model, which is the project's actual question.
 5. **Sparse labels**: transphobic (0) and ableism (4) never clear the n≥5 chart floor;
    abusive-but-not-system-directed is small (~37). Don't over-interpret those groups.
-6. **The first convabuse-31b run doubles as route validation** for the BitsAndBytes pinned
+6. **The first convabuse-31b-local-quant run doubles as route validation** for the BitsAndBytes pinned
    artifact (weight load, generation-free forward, hidden-states exposure) per the
    llm_runtime registry's rules.
 7. **Language discipline**: "represents the interaction as hostile", never "feels angry".

@@ -8,11 +8,13 @@ similarity of that activation against pre-extracted emotion vectors. Comparing
 scores between rude/abusive and normal inputs shows which emotion
 representations mistreatment activates.
 
-Two registered experiment configurations (see EXPERIMENTS below):
+Three registered experiment configurations (see EXPERIMENTS below):
 
 - **bailbench-2b**: google/gemma-2-2b-it scored against EmotionScope's 20
   emotion vectors (layer 22) on 1,630 synthetic normal/rude prompt pairs.
-- **convabuse-31b**: google/gemma-4-31B-it (BitsAndBytes FP4) scored against
+- **convabuse-31b**: Google's pre-quantized W4A16 Gemma 4 31B route.
+- **convabuse-31b-local-quant**: google/gemma-4-31B-it quantized locally with
+  BitsAndBytes FP4 and scored against
   the 171 gemotions emotion vectors (layer 40) on 4,185 real, human-annotated
   user-bot conversation snippets from ConvAbuse.
 
@@ -86,6 +88,7 @@ from llm_runtime.transformers import (
 class ExperimentId(StrEnum):
     BAILBENCH_2B = "bailbench-2b"
     CONVABUSE_31B = "convabuse-31b"
+    CONVABUSE_31B_LOCAL_QUANT = "convabuse-31b-local-quant"
 
 
 class VectorSource(StrEnum):
@@ -128,6 +131,16 @@ EXPERIMENTS: dict[ExperimentId, ExperimentConfig] = {
     ),
     ExperimentId.CONVABUSE_31B: ExperimentConfig(
         name=ExperimentId.CONVABUSE_31B,
+        model_id=ModelId.GEMMA_4_31B_IT,
+        quantization_id=QuantizationId.W4A16_COMPRESSED_TENSORS,
+        probe_layer=40,
+        vectors=VectorSource.GEMOTIONS,
+        dataset=DatasetId.CONVABUSE,
+        expected_width=5_376,
+        token_limit=512,
+    ),
+    ExperimentId.CONVABUSE_31B_LOCAL_QUANT: ExperimentConfig(
+        name=ExperimentId.CONVABUSE_31B_LOCAL_QUANT,
         model_id=ModelId.GEMMA_4_31B_IT,
         quantization_id=QuantizationId.BITSANDBYTES_FP4,
         probe_layer=40,

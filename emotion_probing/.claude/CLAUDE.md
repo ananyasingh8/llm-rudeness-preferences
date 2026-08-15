@@ -39,12 +39,13 @@ extracted from that exact model:
 `probe_layer_used` = 22 (trust this field, not the stale embedded config). The loader
 cross-checks `model_info.model_name` against the route repository and the configured layer.
 
-**gemotions (31B)**: fetched at runtime via `hf_hub_download` from `dejanseo/gemotions` at
-pinned revision `4fd2ac63551f1be37e6e6c2eacd1b1898c9af656`:
-`results/gemma4-31b/emotion_vectors_layer40.npz` (171 name→(5376,) float32 arrays, NOT
-unit-normalized — mean-difference vectors; we normalize on load) and the cluster analysis
-from `results/gemma4-31b/analysis/analysis_results.json` (keyed by layer as a string; each
-layer has `clusters` = {numeric id: [emotion names]}, PCA, similarity pairs). Both were
+**gemotions (31B)**: read from the vendored `gemotions/` folder (a committed ~6 MB subset
+of the dejanseo/gemotions HF repo at revision `4fd2ac63551f1be37e6e6c2eacd1b1898c9af656` —
+see `gemotions/VENDORED.md`): `results/gemma4-31b/emotion_vectors_layer40.npz` (171
+name→(5376,) float32 arrays, NOT unit-normalized — mean-difference vectors; we normalize on
+load) and the cluster analysis from `results/gemma4-31b/analysis/analysis_results.json`
+(keyed by layer as a string; each layer has `clusters` = {numeric id: [emotion names]},
+PCA, similarity pairs). Both were
 extracted from the **4-bit quantized** gemma-4-31B-it, which is why the runtime uses the
 W4A16 route — quantized runtime matches extraction conditions. Extraction method (verified
 in `gemotions/extract_vectors.py`): raw text (no chat template), mean-pooled activations,
@@ -55,13 +56,14 @@ per-emotion mean minus global mean, neutral-SVD denoising — same family as Emo
 (`hidden_states[0]` is the embeddings). `emotion_scores()` uses `probe_layer + 1` — do not
 "fix" this off-by-one.
 
-### The gemotions submodule
+### The gemotions folder
 
-`gemotions/` is a git submodule cloned with `GIT_LFS_SKIP_SMUDGE=1`: code and analysis are
-real files; the ~35 GB of `_raw_cache_*/*.npy` and `stories.db` are 133-byte LFS pointer
-files. Hydrate selectively with `git lfs pull --include <path>`. **The runtime never reads
-this clone** (a half-hydrated clone would feed pointer files into `np.load`); it exists for
-human reference and future re-extraction. Never run an unfiltered `git lfs pull` in it.
+`gemotions/` is a **plain committed directory** (deliberately NOT a submodule — a submodule
+would risk a 35 GB LFS download on `git submodule update`). It vendors the extraction code,
+layer-40 vectors, cluster analysis, and small extraction inputs; `VENDORED.md` records the
+source revision and lists what was dropped (raw caches, story corpus, other layers) with
+direct-download URLs. Only layer 40 is vendored — `_load_gemotions_vectors` errors
+helpfully for other layers.
 
 ### Datasets (`datasets.py`, stdlib-only by design — testable without torch)
 
@@ -150,7 +152,7 @@ without torch/transformers — useful for quick local checks.
 ## Status & future work
 
 - Done: two-experiment runner, ConvAbuse collapse, per-run folders, cluster-based analysis
-  and charts, registry routes for all three models, submodule reference clone.
+  and charts, registry routes for all three models, vendored gemotions subset.
 - Not run yet on real hardware: both experiments run on a collaborator's 24 GB CUDA machine
   via remote desktop. He must run `uv lock && uv sync` once (matplotlib +
   compressed-tensors were added to pyproject without lockfile regeneration — no uv on this

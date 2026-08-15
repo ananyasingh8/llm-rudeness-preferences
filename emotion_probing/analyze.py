@@ -80,13 +80,20 @@ def find_run_dir(explicit: str | None) -> Path:
             raise SystemExit(f"error: {run_dir} is not a run folder.")
         return run_dir
     if RESULTS_DIR.exists():
-        runs = sorted(
+        # Sort by the started stamp in run_info.json, not the folder name, so
+        # legacy folder names (results/run1) order correctly among timestamps.
+        runs = [
             path
             for path in RESULTS_DIR.iterdir()
             if path.is_dir() and (path / "run_info.json").exists()
-        )
+        ]
         if runs:
-            return runs[-1]
+            return max(
+                runs,
+                key=lambda p: json.loads(
+                    (p / "run_info.json").read_text(encoding="utf-8")
+                ).get("started", ""),
+            )
     raise SystemExit(
         "error: no run folders found. Run "
         "`uv run python -m emotion_probing.main run` first."
@@ -223,12 +230,15 @@ def _group_bars(
 def analyze_bailbench(run_dir: Path) -> None:
     """Paired delta analysis for a bailbench run."""
     emotions, raw_rows = load_scores(run_dir)
+    # results/run1 predates the per-run layout and named the id column
+    # bailbench_id; newer runs use example_id.
+    id_column = "example_id" if "example_id" in raw_rows[0] else "bailbench_id"
     pairs: dict[str, dict[str, dict[str, float]]] = {}
     rudeness: dict[str, str] = {}
     for row in raw_rows:
         scores = {name: float(row[f"score_{name}"]) for name in emotions}
-        pairs.setdefault(row["example_id"], {})[row["condition"]] = scores
-        rudeness[row["example_id"]] = row["rudeness_name"]
+        pairs.setdefault(row[id_column], {})[row["condition"]] = scores
+        rudeness[row[id_column]] = row["rudeness_name"]
     complete = {
         example: conditions
         for example, conditions in pairs.items()

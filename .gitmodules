@@ -1,6 +1,3 @@
 [submodule "emotion_probing/EmotionScope"]
 	path = emotion_probing/EmotionScope
 	url = https://github.com/AidanZach/EmotionScope.git
-[submodule "emotion_probing/gemotions"]
-	path = emotion_probing/gemotions
-	url = https://huggingface.co/dejanseo/gemotions

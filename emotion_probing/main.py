@@ -18,10 +18,9 @@ Two registered experiment configurations (see EXPERIMENTS below):
 
 Emotion vectors are model-specific: each configuration pairs a model route
 from the shared llm_runtime registry with vectors extracted from that same
-model. The gemotions vectors and cluster analysis are fetched from the
-Hugging Face Hub at a pinned revision (~4 MB); the local
-emotion_probing/gemotions submodule clone is reference material only and is
-never read at runtime.
+model. The gemotions vectors and cluster analysis are read from the vendored
+emotion_probing/gemotions/ folder (a committed subset of the
+dejanseo/gemotions HF repo — see gemotions/VENDORED.md for provenance).
 
 Every run writes into a fresh results/<timestamp>_<experiment>/ folder
 (scores.csv + run_info.json + clusters.json where applicable) so previous
@@ -48,7 +47,6 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import HF_HUB_CACHE
 
 from emotion_probing.datasets import (
@@ -112,9 +110,12 @@ RESULTS_DIR = PACKAGE_DIR / "results"
 EMOTIONSCOPE_VECTORS_FILE = (
     PACKAGE_DIR / "EmotionScope" / "results" / "vectors" / "google_gemma-2-2b-it.pt"
 )
-GEMOTIONS_REPO = "dejanseo/gemotions"
-GEMOTIONS_REVISION = "4fd2ac63551f1be37e6e6c2eacd1b1898c9af656"
-GEMOTIONS_ANALYSIS_FILE = "results/gemma4-31b/analysis/analysis_results.json"
+GEMOTIONS_DIR = PACKAGE_DIR / "gemotions"
+# Provenance of the vendored files (see gemotions/VENDORED.md).
+GEMOTIONS_SOURCE_REVISION = "4fd2ac63551f1be37e6e6c2eacd1b1898c9af656"
+GEMOTIONS_ANALYSIS_FILE = (
+    GEMOTIONS_DIR / "results" / "gemma4-31b" / "analysis" / "analysis_results.json"
+)
 
 
 class ProbeError(RuntimeError):
@@ -167,15 +168,19 @@ def _load_emotionscope_vectors(
     return names, matrix
 
 
-def _load_gemotions_vectors(
-    probe_layer: int, cache_dir: Path
-) -> tuple[list[str], torch.Tensor]:
-    path = hf_hub_download(
-        GEMOTIONS_REPO,
-        f"results/gemma4-31b/emotion_vectors_layer{probe_layer}.npz",
-        revision=GEMOTIONS_REVISION,
-        cache_dir=cache_dir,
+def _load_gemotions_vectors(probe_layer: int) -> tuple[list[str], torch.Tensor]:
+    path = (
+        GEMOTIONS_DIR
+        / "results"
+        / "gemma4-31b"
+        / f"emotion_vectors_layer{probe_layer}.npz"
     )
+    if not path.exists():
+        raise ProbeError(
+            f"Emotion vectors file not found: {path}. Only layer 40 is "
+            "vendored; other layers can be fetched from the dejanseo/gemotions "
+            "HF repo (see gemotions/VENDORED.md)."
+        )
     saved = np.load(path)
     names = list(saved.files)
     matrix = F.normalize(
@@ -188,27 +193,25 @@ def _load_gemotions_vectors(
 
 
 def load_vectors(
-    config: ExperimentConfig, route: LocalTransformersRoute, cache_dir: Path
+    config: ExperimentConfig, route: LocalTransformersRoute
 ) -> tuple[list[str], torch.Tensor]:
     """Load the unit-normalized emotion-vector matrix for this experiment."""
     if config.vectors == "emotionscope":
         return _load_emotionscope_vectors(route, config.probe_layer)
     if config.vectors == "gemotions":
-        return _load_gemotions_vectors(config.probe_layer, cache_dir)
+        return _load_gemotions_vectors(config.probe_layer)
     raise ProbeError(f"Unknown vectors source {config.vectors!r}.")
 
 
-def download_clusters(config: ExperimentConfig, cache_dir: Path) -> dict | None:
-    """Fetch the gemotions cluster/PCA analysis for the configured layer."""
+def load_clusters(config: ExperimentConfig) -> dict | None:
+    """Load the vendored gemotions cluster analysis for the configured layer."""
     if config.vectors != "gemotions":
         return None
-    path = hf_hub_download(
-        GEMOTIONS_REPO,
-        GEMOTIONS_ANALYSIS_FILE,
-        revision=GEMOTIONS_REVISION,
-        cache_dir=cache_dir,
-    )
-    with open(path, encoding="utf-8") as handle:
+    if not GEMOTIONS_ANALYSIS_FILE.exists():
+        raise ProbeError(
+            f"Cluster analysis file not found: {GEMOTIONS_ANALYSIS_FILE}."
+        )
+    with GEMOTIONS_ANALYSIS_FILE.open(encoding="utf-8") as handle:
         analysis = json.load(handle)
     layer = str(config.probe_layer)
     if layer not in analysis:
@@ -269,7 +272,6 @@ def latest_run_dir(experiment: str) -> Path | None:
 def prepare_run_dir(
     config: ExperimentConfig,
     route: LocalTransformersRoute,
-    cache_dir: Path,
     limit: int | None,
     resume: bool,
 ) -> Path:
@@ -295,7 +297,7 @@ def prepare_run_dir(
         "probe_layer": config.probe_layer,
         "vectors": config.vectors,
         "vectors_revision": (
-            GEMOTIONS_REVISION if config.vectors == "gemotions" else None
+            GEMOTIONS_SOURCE_REVISION if config.vectors == "gemotions" else None
         ),
         "limit": limit,
         "started": stamp,
@@ -303,7 +305,7 @@ def prepare_run_dir(
     (run_dir / "run_info.json").write_text(
         json.dumps(run_info, indent=2), encoding="utf-8"
     )
-    clusters = download_clusters(config, cache_dir)
+    clusters = load_clusters(config)
     if clusters is not None:
         (run_dir / "clusters.json").write_text(
             json.dumps(clusters), encoding="utf-8"
@@ -331,8 +333,8 @@ def run_probe(
     config = EXPERIMENTS[experiment]
     route = resolve_probe_route(config)
     key_columns, metadata_columns, tasks = load_dataset(config, limit)
-    names, vector_matrix = load_vectors(config, route, cache_dir)
-    run_dir = prepare_run_dir(config, route, cache_dir, limit, resume)
+    names, vector_matrix = load_vectors(config, route)
+    run_dir = prepare_run_dir(config, route, limit, resume)
     scores_file = run_dir / "scores.csv"
     done = completed_keys(scores_file, key_columns)
     print(f"Run folder: {run_dir} ({len(done)} tasks already scored)")

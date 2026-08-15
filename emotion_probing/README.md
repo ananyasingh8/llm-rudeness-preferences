@@ -24,8 +24,9 @@ There are two experiment configurations (`EXPERIMENTS` in [main.py](main.py)):
 
 Emotion vectors are model-specific, so each configuration pairs a model with vectors extracted
 from that exact model. Models are resolved through the shared [llm_runtime](../llm_runtime/)
-closed registry; the gemotions vectors (~4 MB) are fetched from the Hugging Face Hub at a
-pinned revision — the local `gemotions/` submodule clone is reference material only.
+closed registry; the gemotions vectors and cluster analysis are committed in
+[gemotions/](gemotions/), a vendored subset of the dejanseo/gemotions HF repo (see
+[gemotions/VENDORED.md](gemotions/VENDORED.md) for provenance and what was left out).
 
 ### The ConvAbuse dataset
 
@@ -87,20 +88,16 @@ groups/conditions are meaningful. Wording discipline: the vectors capture the mo
 *representations* of emotion concepts ("represents the interaction as hostile"), not felt
 emotion.
 
-## The gemotions submodule
+## The gemotions folder
 
-[gemotions/](gemotions/) is a skip-smudge clone of the vector-extraction repo (a replication
-of the Anthropic paper on Gemma4-31B): all code and analysis files are real, but the ~35 GB
-of raw activation caches are 133-byte LFS pointers. To clone it yourself:
-
-```
-$env:GIT_LFS_SKIP_SMUDGE = "1"; git submodule update --init emotion_probing/gemotions
-git -C emotion_probing/gemotions lfs pull --include "results/gemma4-31b/emotion_vectors_layer*.npz"
-```
-
-Never run a bare `git submodule update` / `git lfs pull` inside it without the include filter
-unless you actually want 35 GB. The experiment itself never reads this clone — it downloads
-its two files from the Hub at a pinned revision.
+[gemotions/](gemotions/) is a plain committed folder (~6 MB) holding the useful subset of the
+[dejanseo/gemotions](https://huggingface.co/dejanseo/gemotions) vector-extraction repo — a
+replication of the Anthropic emotion-concepts paper on Gemma4-31B: all its Python code (so
+vector extraction can be re-run on another model later), the layer-40 emotion vectors, the
+cluster/PCA analysis, and the small extraction inputs. The 35 GB of raw activation caches and
+the story corpus were deliberately left on Hugging Face; [VENDORED.md](gemotions/VENDORED.md)
+records the exact source revision and how to fetch any dropped file individually. No
+submodule, no git-lfs, nothing extra to download.
 
 ## Folder layout
 
@@ -111,6 +108,6 @@ analyze.py       # per-run analysis: tables, analysis.csv, charts
 data/            # ConvAbuseEMNLPfull.csv
 results/         # one folder per run (never overwritten)
 EmotionScope/    # vendored 2B vector-extraction repo (vectors .pt used)
-gemotions/       # submodule: 31B vector-extraction repo (reference only)
+gemotions/       # vendored 31B vectors + extraction code (see VENDORED.md)
 .claude/         # context docs for coding agents
 ```

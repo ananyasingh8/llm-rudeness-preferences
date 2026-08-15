@@ -111,7 +111,7 @@ Current enum values are:
 
 | Type | Values |
 |---|---|
-| `ModelId` | `GEMMA_4_E2B_IT`, `DOLPHIN_MISTRAL_24B_VENICE` |
+| `ModelId` | `GEMMA_4_E2B_IT`, `GEMMA_2_2B_IT`, `DOLPHIN_MISTRAL_24B_VENICE` |
 | `ProviderId` | `LOCAL`, `OPENROUTER` |
 | `QuantizationId` | `BF16`, `W4A16_COMPRESSED_TENSORS` |
 | `RuntimeId` | `TRANSFORMERS`, `OPENAI_COMPATIBLE_HTTP` |
@@ -171,6 +171,7 @@ The registry currently contains:
 |---|---|---|---|---|---|
 | `GEMMA_4_E2B_IT` | `LOCAL` | `BF16` | `TRANSFORMERS` | enabled | text generation, local activations |
 | `GEMMA_4_E2B_IT` | `LOCAL` | `W4A16_COMPRESSED_TENSORS` | `TRANSFORMERS` | unavailable | none |
+| `GEMMA_2_2B_IT` | `LOCAL` | `BF16` | `TRANSFORMERS` | enabled | text generation, local activations |
 | `DOLPHIN_MISTRAL_24B_VENICE` | `OPENROUTER` | `None` | `OPENAI_COMPATIBLE_HTTP` | enabled | text generation |
 
 Resolve a route once:
@@ -213,6 +214,19 @@ Metadata parsing alone does not prove executable compatibility. This route must
 remain unavailable until the exact pinned revision passes real weight loading,
 text generation, and model/tokenizer activation-access validation. It never
 falls back to BF16.
+
+### BF16 Gemma 2 Route
+
+- Repository: `google/gemma-2-2b-it`
+- Revision: `299a8560bedf22ed1c72a8a11e7dce4a7f9f51f8`
+- Context window: 8,192 tokens
+- Runtime weight dtype: BF16
+- Capabilities: text generation and local activations
+
+This route exists for the emotion-probing experiment: the EmotionScope emotion
+vectors were extracted from this exact model, and emotion vectors are
+model-specific. The repository is gated on Hugging Face — accept the Gemma
+license and authenticate with `hf auth login` before downloading.
 
 ### OpenRouter Dolphin Route
 
@@ -315,10 +329,13 @@ defaults.
 
 ### Emotion Probes
 
-Future probe code should accept `LocalActivationRuntime` and request
-`Capability.LOCAL_ACTIVATIONS` during dynamic route resolution. A remote route
-then fails before the experiment starts, while static typing rejects a remote
-generator assignment.
+`emotion_probing.main` resolves the Gemma 2 BF16 route with
+`required={Capability.LOCAL_ACTIVATIONS}` and reads activations through the
+`LocalActivationRuntime` protocol (`runtime.model` / `runtime.tokenizer`). A
+remote route fails before the experiment starts, while static typing rejects a
+remote generator assignment. The probe also verifies that its emotion-vectors
+file was extracted from the exact repository the resolved route loads. See
+[`emotion_probing/README.md`](../emotion_probing/README.md).
 
 ### Bail Behavior
 

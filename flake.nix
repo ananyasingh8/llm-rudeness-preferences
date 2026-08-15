@@ -42,9 +42,9 @@
 
       # CLI tools available in $PATH
       cliTools = pkgs_: [
-        pkgs_.uv                                    # Package installer
-        pkgs_.mypy                                  # Type checker
-        pkgs_.${pythonAttr + "Packages"}.ruff       # Linter/formatter
+        pkgs_.uv # Package installer
+        pkgs_.mypy # Type checker
+        pkgs_.${pythonAttr + "Packages"}.ruff # Linter/formatter
       ];
 
       # Native build dependencies (C libraries, compilers)
@@ -56,6 +56,7 @@
         tk
         tcl
         libxcrypt
+        chafa
       ];
 
       # CUDA build dependencies (GPU libraries, graphics, multimedia)

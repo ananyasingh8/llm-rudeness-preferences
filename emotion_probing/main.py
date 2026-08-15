@@ -59,6 +59,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from huggingface_hub.constants import HF_HUB_CACHE
+from tqdm import tqdm
 from transformers.tokenization_utils_base import BatchEncoding
 
 from emotion_probing.datasets import (
@@ -164,6 +165,7 @@ GEMOTIONS_ANALYSIS_FILE = (
 )
 PROBE_SOURCE_FILE = Path(__file__)
 RUN_WRITER_LOCK_NAME = ".writer.lock"
+SCORE_CHECKPOINT_ROWS = 50
 HASH_CHUNK_BYTES = 1024 * 1024
 
 
@@ -1226,38 +1228,50 @@ def run_probe(
         else:
             _stage_new_run(config, run_dir, provenance)
             done = set()
-        print(f"Run folder: {run_dir} ({len(done)} tasks already scored)")
+        pending_tasks = [
+            task
+            for task in tasks
+            if tuple(str(task["row"][column]) for column in key_columns) not in done
+        ]
+        completed_count = len(tasks) - len(pending_tasks)
+        print(f"Run folder: {run_dir} ({completed_count} tasks already scored)")
 
         write_header = not scores_file.exists()
-        has_pending_tasks = any(
-            tuple(str(task["row"][column]) for column in key_columns) not in done
-            for task in tasks
-        )
+        has_pending_tasks = bool(pending_tasks)
         measured_cuda = reset_cuda_peaks(runtime) if has_pending_tasks else False
         try:
             with scores_file.open("a", encoding="utf-8", newline="") as handle:
                 writer = csv.DictWriter(handle, fieldnames=columns)
                 if write_header:
                     writer.writeheader()
-                for index, task in enumerate(tasks):
-                    row = dict(task["row"])
-                    key = tuple(str(row[column]) for column in key_columns)
-                    if key in done:
-                        continue
-                    scores, n_tokens = emotion_scores(
-                        runtime,
-                        task["messages"],
-                        vector_matrix,
-                        config.probe_layer,
-                        expected_width=config.expected_width,
-                        token_limit=config.token_limit,
-                    )
-                    row["n_tokens"] = n_tokens
-                    row |= dict(zip([f"score_{name}" for name in names], scores))
-                    writer.writerow(row)
+                pending_rows: list[dict[str, object]] = []
+                with tqdm(
+                    pending_tasks,
+                    total=len(tasks),
+                    initial=completed_count,
+                    desc="Scoring",
+                    unit="task",
+                ) as progress:
+                    for task in progress:
+                        row = dict(task["row"])
+                        scores, n_tokens = emotion_scores(
+                            runtime,
+                            task["messages"],
+                            vector_matrix,
+                            config.probe_layer,
+                            expected_width=config.expected_width,
+                            token_limit=config.token_limit,
+                        )
+                        row["n_tokens"] = n_tokens
+                        row |= dict(zip([f"score_{name}" for name in names], scores))
+                        pending_rows.append(row)
+                        if len(pending_rows) == SCORE_CHECKPOINT_ROWS:
+                            writer.writerows(pending_rows)
+                            handle.flush()
+                            pending_rows.clear()
+                if pending_rows:
+                    writer.writerows(pending_rows)
                     handle.flush()
-                    if (index + 1) % 50 == 0 or index + 1 == len(tasks):
-                        print(f"Scored {index + 1}/{len(tasks)} tasks")
         finally:
             persist_cuda_peaks(run_dir, measured_cuda)
     print(f"Results written to {scores_file}")

@@ -176,7 +176,9 @@ nix develop
 uv sync --locked
 ```
 
-Nix is optional. It is not required by the Python application workflow.
+The shell supplies Triton's compiler and NixOS NVIDIA driver-library discovery;
+run local CUDA inference from inside this shell. Nix remains optional for
+developers on conventional Linux systems.
 
 ## Typed Runtime Registry
 

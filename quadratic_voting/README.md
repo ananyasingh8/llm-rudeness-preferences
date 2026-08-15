@@ -13,6 +13,10 @@ uv python install 3.12
 uv sync --locked
 ```
 
+On NixOS, enter `nix develop` first so Triton can find the host NVIDIA driver
+and the shell-provided compiler. Developers on conventional Linux systems can
+use uv directly.
+
 ## Gemma 4 E2B Chat
 
 Download Google's complete pinned instruction-tuned QAT checkpoint:

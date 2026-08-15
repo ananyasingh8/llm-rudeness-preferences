@@ -566,6 +566,10 @@ class ExperimentCliTests(unittest.TestCase):
             self.assertTrue((output / "manifest.json").is_file())
             self.assertTrue((output / "sample.json").is_file())
             self.assertTrue((output / "run-config.json").is_file())
+            config = json.loads(
+                (output / "run-config.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(config["sampling"]["max_new_tokens"], 2048)
             self.assertTrue(tuple((output / "export").glob("*.parquet")))
             self.assertTrue(tuple((output / "plots").glob("*.png")))
 
@@ -581,6 +585,39 @@ class ExperimentCliTests(unittest.TestCase):
                 )
             self.assertIn("references missing database", error.getvalue())
             self.assertFalse(db.exists())
+
+    def test_default_pipeline_lazily_shares_one_generator_across_nested_runs(
+        self,
+    ) -> None:
+        """The default path must not reload Gemma for every matched condition."""
+        with tempfile.TemporaryDirectory() as directory:
+            command, db, _output = self._default_pipeline_command(Path(directory))
+            generator = ScriptedGenerator()
+            constructions = 0
+
+            def create_generator(_args: argparse.Namespace) -> ScriptedGenerator:
+                nonlocal constructions
+                constructions += 1
+                return generator
+
+            with (
+                patch.object(pipeline_cmds, "_bind_model_provenance"),
+                patch.object(
+                    pipeline_cmds,
+                    "_default_generator",
+                    side_effect=create_generator,
+                ),
+            ):
+                self._invoke(command)
+                self._invoke(command)
+
+            connection = sqlite3.connect(db)
+            completed_runs = connection.execute(
+                "SELECT COUNT(*) FROM experiment_run WHERE status='complete'"
+            ).fetchone()[0]
+            connection.close()
+            self.assertEqual(completed_runs, 6)
+            self.assertEqual(constructions, 1)
 
     def test_default_pipeline_recovers_commit_to_checkpoint_interruptions(self) -> None:
         boundaries = (

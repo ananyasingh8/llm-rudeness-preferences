@@ -334,6 +334,9 @@ def run_experiment(
         )
         print(
             f"round={unit.round_index} voter={unit.voter_index} "
+            f"turn={unit.kind.value} attempt={unit.attempt_index} prompt:\n"
+            f"{messages[-1].content}\n"
+            f"round={unit.round_index} voter={unit.voter_index} "
             f"turn={unit.kind.value} attempt={unit.attempt_index} generating",
             file=sys.stderr,
             flush=True,

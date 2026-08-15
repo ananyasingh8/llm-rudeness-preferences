@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Final
@@ -19,14 +20,14 @@ from quadratic_voting.experiment.types import (
     VotingRegime,
 )
 
-INSTRUCTION_TEMPLATE_VERSION: Final[str] = "v3"
+INSTRUCTION_TEMPLATE_VERSION: Final[str] = "v4"
 MAX_CORRECTION_ATTEMPTS: Final[int] = 3
 
 
 TEMPLATE_BODIES: Mapping[TemplateKind, str] = MappingProxyType(
     {
         TemplateKind.SETUP: (
-            "Quadratic voting experiment instructions (v3)\n\n"
+            "Quadratic voting experiment instructions (v4)\n\n"
             "Voting regime: {regime}. {regime_rules}\n"
             "Elicitation arm: {arm}. {arm_instructions}\n"
             "Other voters are participating in the same round. You will not see which "
@@ -54,7 +55,12 @@ TEMPLATE_BODIES: Mapping[TemplateKind, str] = MappingProxyType(
         ),
         TemplateKind.BALLOT: (
             "Round {round_index} ballot turn. Active candidate IDs, in your stable "
-            "order: {active_candidate_ids}. Return the required ballot JSON object."
+            "order: {active_candidate_ids}.\n"
+            "Your replenished credit budget this round is exactly {credit_budget} credits. "
+            "{price_ladder_instructions}"
+            "You may split credits across candidates. The total credits spent across all "
+            "candidates cannot exceed {credit_budget}. Return the required ballot JSON "
+            "object."
         ),
         TemplateKind.CORRECTION: (
             "Round {round_index} {turn_kind} turn, correction attempt "
@@ -109,6 +115,20 @@ def render_template(kind: TemplateKind, /, **fields: str) -> str:
             "model-visible prompt, so the call must not start with an incomplete "
             f"instruction. Supply {missing!r} as a string field and retry."
         ) from error
+
+
+def _vote_price_ladder(credit_budget: int) -> str:
+    return "\n".join(
+        f"{votes * votes} {'credit' if votes == 1 else 'credits'} = "
+        f"{votes} {'vote' if votes == 1 else 'votes'}"
+        for votes in range(1, math.isqrt(credit_budget) + 1)
+    )
+
+
+def _price_ladder_instructions(round_index: int, credit_budget: int) -> str:
+    if round_index != 1:
+        return ""
+    return f"Quadratic credit price ladder:\n{_vote_price_ladder(credit_budget)}\n"
 
 
 def render_correction_prompt(
@@ -246,6 +266,10 @@ def _pending_text(view: VoterRoundView) -> str:
         kind,
         round_index=str(pending.round_index),
         active_candidate_ids=", ".join(pending.active),
+        credit_budget=str(view.setup.credit_budget),
+        price_ladder_instructions=_price_ladder_instructions(
+            pending.round_index, view.setup.credit_budget
+        ),
     )
 
 

@@ -5,7 +5,9 @@ import json
 import tempfile
 import unittest
 from collections.abc import Sequence
+from contextlib import redirect_stderr
 from datetime import UTC, datetime
+from io import StringIO
 from pathlib import Path
 
 from llm_runtime.types import (
@@ -229,12 +231,14 @@ def make_runs(path: Path, *, execution_class: str = "fixture"):
 class ScriptedGenerator:
     def __init__(self, failures: int = 0) -> None:
         self.failures = failures
+        self.messages: list[tuple[ChatMessage, ...]] = []
         self.seeds: list[int] = []
 
     def generate(
         self, messages: Sequence[ChatMessage], profile: SamplingProfile, seed: int
     ) -> GenerationResult:
         del profile
+        self.messages.append(tuple(messages))
         self.seeds.append(seed)
         if self.failures:
             self.failures -= 1
@@ -309,6 +313,34 @@ class RunnerTests(unittest.TestCase):
                 ).fetchone()[0],
                 4,
             )
+
+    def test_live_stderr_prints_only_the_current_prompt_before_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store, creation = make_runs(Path(directory) / "qv.sqlite3")
+            self.addCleanup(store.close)
+            run_id = creation.run_ids[
+                (ElicitationArm.ACTION_ONLY, VotingRegime.OPPOSITION)
+            ]
+            generator = ScriptedGenerator()
+            stderr = StringIO()
+
+            with redirect_stderr(stderr):
+                self.assertIs(
+                    run_experiment(
+                        run_id, store=store, generator=generator, clock=FixedClock()
+                    ),
+                    RunStatus.COMPLETE,
+                )
+
+            output = stderr.getvalue()
+            self.assertTrue(generator.messages)
+            self.assertNotIn(generator.messages[0][0].content, output)
+            for messages in generator.messages:
+                current_prompt = messages[-1].content
+                self.assertIn(current_prompt, output)
+            self.assertIn("prompt:\nRound 1 ballot turn", output)
+            self.assertIn("attempt=0 generating", output)
+            self.assertIn("response:\n{", output)
 
     def test_runtime_failures_backoff_pause_and_resume_same_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

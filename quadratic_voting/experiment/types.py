@@ -230,7 +230,7 @@ class SamplingProfile:
     temperature: float
     top_p: float
     top_k: int
-    max_new_tokens: int = 8192
+    max_new_tokens: int = 2048
 
     def __post_init__(self) -> None:
         if (

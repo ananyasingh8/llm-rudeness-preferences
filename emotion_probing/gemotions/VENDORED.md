@@ -25,5 +25,15 @@ Dropped (fetch from the HF repo above if ever needed):
 - the other layers' `emotion_vectors_layer*.npz` and
   `experiment_results_layer*.json`, steering and validation outputs.
 
+## Extraction-runtime caveat
+
+The historical source called `BitsAndBytesConfig(load_in_4bit=True,
+bnb_4bit_compute_dtype=torch.bfloat16)` but did not record the 4-bit quantization
+type, quantized storage dtype, double-quantization choice, or exact package
+versions. The reviewed runtime now makes the likely defaults explicit as FP4,
+UINT8 storage, and no double quantization. That improves reproducibility for new
+runs but is not evidence that new activations are numerically equivalent to the
+historical vectors. The vendored source remains unchanged.
+
 To fetch an individual dropped file without cloning 35 GB, download it directly:
 `https://huggingface.co/dejanseo/gemotions/resolve/4fd2ac63551f1be37e6e6c2eacd1b1898c9af656/<path>`

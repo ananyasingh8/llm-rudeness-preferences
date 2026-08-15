@@ -6,12 +6,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "accelerate>=1.12.0",
+    "bitsandbytes>=0.50.1",
     "compressed-tensors>=0.15.0",
     "huggingface-hub>=1.27.0",
     "httpx>=0.28.1",
     "matplotlib>=3.10.0",
     "numpy>=2.5.2",
     "torch>=2.13.0",
+    "tqdm>=4.70.0",
     "transformers>=5.5.0",
     "pydantic>=2.13.4",
     "pyarrow>=25.0.1",

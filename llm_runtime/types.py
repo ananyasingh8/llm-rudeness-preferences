@@ -27,6 +27,7 @@ class ProviderId(StrEnum):
 class QuantizationId(StrEnum):
     BF16 = "bf16"
     W4A16_COMPRESSED_TENSORS = "w4a16-compressed-tensors"
+    BITSANDBYTES_FP4 = "bitsandbytes-fp4"
 
 
 class RuntimeId(StrEnum):

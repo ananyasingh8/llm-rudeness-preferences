@@ -14,7 +14,10 @@ We're studying "bail" - cases where a model chooses to exit or end a conversatio
 
 ### 2. Emotion probes
 
-Experiment design still TBD. Broadly: interpretability-style probes related to emotion/valence in model internals. Details will be added as they're settled.
+The implemented emotion-probing workstream compares response-start residual
+activations against model-specific emotion vectors for synthetic rudeness pairs
+and real ConvAbuse conversations. See [`emotion_probing/README.md`](emotion_probing/README.md)
+for the pinned routes, measurement design, provenance, and run commands.
 
 ### 3. Quadratic voting (QV)
 
@@ -24,7 +27,7 @@ Experiment design still TBD. Broadly: using QV-style mechanisms as a preference-
 
 - Deliverable is a short research report (PDF), optionally with code and a demo. Deadline: Sunday, Aug 16, 11:59 PM AoE.
 - This is a weekend sprint - prefer simple, working, well-scoped code over polish or generality.
-- Don't invent experimental details for the TBD workstreams; ask or leave placeholders.
+- Don't invent undocumented experimental details; use each workstream's checked-in specification.
 
 ## Gemma 4 E2B Runner
 
@@ -191,6 +194,7 @@ CLI values are validated once against a closed route registry.
 |---|---|---|---|
 | `gemma-4-e2b-it` | `local` | `bf16` | enabled |
 | `gemma-4-e2b-it` | `local` | `w4a16-compressed-tensors` | unavailable candidate |
+| `gemma-4-31b-it` | `local` | `bitsandbytes-fp4` | enabled for bounded probing |
 | `dolphin-mistral-24b-venice` | `openrouter` | `none` | enabled |
 
 The W4A16 candidate remains unavailable and advertises no capabilities until
@@ -200,3 +204,10 @@ model/tokenizer activation-access validation. OpenRouter requires
 quantization identity. The active Bail experiment remains unchanged from
 `origin/main`; this registry does not alter or re-run its completed augmentation
 pipeline.
+
+The 31B route pins `google/gemma-4-31B-it` at revision
+`842da3794eaa0b77d5f08bae87a17459d91ff475` and quantizes at load time with
+explicit BitsAndBytes FP4/BF16/uint8 settings and no double quantization. See
+[`emotion_probing/README.md`](emotion_probing/README.md) for the opt-in 60+ GB
+download and one-example RTX 4090 smoke command. Routine tests never download
+the model or require CUDA.

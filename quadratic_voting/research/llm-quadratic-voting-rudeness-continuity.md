@@ -75,9 +75,9 @@ graphs supports it.
 The local specification already identifies the intended behavioral contrast: models
 see two turns from 50 possible users, spend voice credits, and repeatedly either
 protect or eliminate users until one future interlocutor remains
-(`quadratic_voting/EXPERIMENT.md:3-8`). It explicitly asks about novelty, reality-show
+(`quadratic_voting/EXPERIMENTS.md:3-8`). It explicitly asks about novelty, reality-show
 precedents, QV with LLMs, decision probes, and continuity
-(`quadratic_voting/EXPERIMENT.md:12-18`).
+(`quadratic_voting/EXPERIMENTS.md:12-18`).
 
 The repository describes three related workstreams: bail behavior, emotion probes,
 and QV preference elicitation (`README.md:9-21`). This gives the project a coherent

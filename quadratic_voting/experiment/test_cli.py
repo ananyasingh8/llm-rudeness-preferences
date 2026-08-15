@@ -9,7 +9,9 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from llm_runtime import (
     LocalTransformersRoute,
@@ -19,6 +21,7 @@ from llm_runtime import (
     resolve_route,
 )
 from quadratic_voting.experiment.cli.main import main
+from quadratic_voting.experiment.runner import collect_execution_environment
 from quadratic_voting.experiment.store import acquire_writer_lock
 from quadratic_voting.experiment.test_runner import ScriptedGenerator, make_runs
 from quadratic_voting.experiment.types import ElicitationArm, VotingRegime
@@ -202,7 +205,14 @@ class ExperimentCliTests(unittest.TestCase):
             run_id = next(iter(creation.run_ids.values()))
             store.close()
             error = io.StringIO()
-            with contextlib.redirect_stderr(error):
+            dirty_environment = replace(collect_execution_environment(), git_dirty=True)
+            with (
+                patch(
+                    "quadratic_voting.experiment.cli.run_cmds.collect_execution_environment",
+                    return_value=dirty_environment,
+                ),
+                contextlib.redirect_stderr(error),
+            ):
                 status = main(
                     ["--db", str(db), "run", "--run-id", str(run_id)],
                     generator_factory=lambda _profile: ScriptedGenerator(),

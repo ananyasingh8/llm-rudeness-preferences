@@ -209,6 +209,7 @@ class TransformersRuntimeTests(unittest.TestCase):
         model.device = torch.device("cpu")
         model.generate.return_value = torch.tensor([[1, 2, 3]])
         tokenizer = MagicMock()
+        tokenizer.eos_token_id = 7
         batch = MagicMock()
         batch.to.return_value = {"input_ids": torch.tensor([[1, 2]])}
         tokenizer.apply_chat_template.return_value = batch
@@ -227,6 +228,8 @@ class TransformersRuntimeTests(unittest.TestCase):
         )
 
         self.assertEqual(response.raw_text, "sampled")
+        self.assertEqual(response.completion_token_ids, (3,))
+        self.assertIs(response.finish_reason, FinishReason.EOS)
         generation_kwargs = model.generate.call_args.kwargs
         self.assertEqual(generation_kwargs["input_ids"].shape, (1, 2))
         self.assertEqual(generation_kwargs["max_new_tokens"], 16)
@@ -278,12 +281,7 @@ class TransformersRuntimeTests(unittest.TestCase):
         self.assertEqual(first.prompt_token_count, 2)
         self.assertEqual(first.completion_token_count, 12)
         self.assertEqual(len(first.completion_token_ids or ()), 12)
-        expected_finish = (
-            FinishReason.EOS
-            if first.completion_token_ids and first.completion_token_ids[-1] == 7
-            else FinishReason.LENGTH
-        )
-        self.assertIs(first.finish_reason, expected_finish)
+        self.assertIs(first.finish_reason, FinishReason.LENGTH)
         self.assertGreaterEqual(first.duration_ms, 0)
         self.assertEqual(first.diagnostics, {})
 

@@ -10,6 +10,7 @@ import json
 import secrets
 import shutil
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 
@@ -22,7 +23,12 @@ from llm_runtime import (
     QuantizationId,
     resolve_route,
 )
-from llm_runtime.transformers import Device, download_transformers_artifact
+from llm_runtime.transformers import (
+    Device,
+    create_transformers_runtime,
+    download_transformers_artifact,
+)
+from quadratic_voting.experiment import gemma
 from quadratic_voting.experiment.catalog import (
     DEFAULT_PRESENTATION_TEMPLATE_BODY,
     DEFAULT_PRESENTATION_TEMPLATE_NAME,
@@ -46,7 +52,9 @@ from quadratic_voting.experiment.transcript import (
 from quadratic_voting.experiment.types import (
     ElicitationArm,
     ReleaseId,
+    SamplingProfile,
     TemplateId,
+    VoterGenerator,
     VotingRegime,
 )
 
@@ -108,6 +116,32 @@ def _invoke(args: argparse.Namespace, command: list[str]) -> str:
             "command after correcting the reported failure."
         )
     return text
+
+
+def _default_generator(args: argparse.Namespace) -> VoterGenerator:
+    """Construct the reviewed pipeline's one local Gemma generator."""
+    route = resolve_route(ModelId.GEMMA_4_E2B_IT, ProviderId.LOCAL, QuantizationId.BF16)
+    if not isinstance(route, LocalTransformersRoute):
+        raise AssertionError("the reviewed default Gemma route must be local")
+    runtime = create_transformers_runtime(
+        route, cache_dir=args.cache_dir, device=args.device
+    )
+    return gemma.GemmaVoterGenerator(runtime)
+
+
+def _shared_default_generator_factory(
+    args: argparse.Namespace,
+) -> Callable[[SamplingProfile], VoterGenerator]:
+    """Lazily share the default runtime across incomplete nested ``run`` commands."""
+    generator: VoterGenerator | None = None
+
+    def factory(_profile: SamplingProfile) -> VoterGenerator:
+        nonlocal generator
+        if generator is None:
+            generator = _default_generator(args)
+        return generator
+
+    return factory
 
 
 def _value(text: str, key: str) -> str:
@@ -315,7 +349,7 @@ def _build_config(
                 "temperature": 0.7,
                 "top_p": 0.9,
                 "top_k": 10,
-                "max_new_tokens": 8192,
+                "max_new_tokens": 2048,
             },
             "ballot_retry": {"max_corrections": 3},
             "statement_retry": {"max_corrections": 3},
@@ -1108,6 +1142,7 @@ def _run(args: argparse.Namespace) -> int:
         _validate_ready_manifest(args, manifest)
 
     if args.generator_factory is None:
+        args.generator_factory = _shared_default_generator_factory(args)
         _bind_model_provenance(args, manifest, manifest_path)
     for run in runs:
         _invoke(

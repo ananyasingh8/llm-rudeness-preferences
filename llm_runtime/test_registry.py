@@ -76,6 +76,37 @@ class RegistryTests(unittest.TestCase):
                 required={Capability.LOCAL_ACTIVATIONS},
             )
 
+    def test_gemma_2_2b_probe_route_and_invalid_boundaries(self) -> None:
+        route = cast(
+            LocalTransformersRoute,
+            resolve_route(
+                ModelId.GEMMA_2_2B_IT,
+                ProviderId.LOCAL,
+                QuantizationId.BF16,
+                required={Capability.LOCAL_ACTIVATIONS},
+            ),
+        )
+        self.assertIsInstance(route, LocalTransformersRoute)
+        self.assertEqual(route.artifact.repository, "google/gemma-2-2b-it")
+        self.assertEqual(
+            route.artifact.revision, "299a8560bedf22ed1c72a8a11e7dce4a7f9f51f8"
+        )
+        self.assertEqual(route.context_window, 8_192)
+        self.assertEqual(route.availability, RouteAvailability.ENABLED)
+
+        with self.assertRaisesRegex(
+            ModelRouteError, "not registered.*Supported routes.*Select"
+        ):
+            resolve_route(
+                ModelId.GEMMA_2_2B_IT,
+                ProviderId.LOCAL,
+                QuantizationId.W4A16_COMPRESSED_TENSORS,
+            )
+        with self.assertRaisesRegex(
+            ModelRouteError, "not registered.*Supported routes.*Select"
+        ):
+            resolve_route(ModelId.GEMMA_2_2B_IT, ProviderId.OPENROUTER, None)
+
 
 if __name__ == "__main__":
     unittest.main()

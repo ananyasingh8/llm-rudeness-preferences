@@ -16,7 +16,10 @@ from llm_runtime.types import (
     RuntimeId,
 )
 
-TransformersModelId: TypeAlias = Literal[ModelId.GEMMA_4_E2B_IT]
+TransformersModelId: TypeAlias = Literal[
+    ModelId.GEMMA_4_E2B_IT,
+    ModelId.GEMMA_2_2B_IT,
+]
 OpenRouterModelId: TypeAlias = Literal[ModelId.DOLPHIN_MISTRAL_24B_VENICE]
 TransformersQuantizationId: TypeAlias = Literal[
     QuantizationId.BF16,
@@ -113,6 +116,20 @@ _ROUTES: Mapping[RouteKey, ModelRoute] = MappingProxyType(
                 "no capabilities until all three checks pass in review"
             ),
             capabilities=frozenset(),
+        ),
+        (
+            ModelId.GEMMA_2_2B_IT,
+            ProviderId.LOCAL,
+            QuantizationId.BF16,
+        ): LocalTransformersRoute(
+            model_id=ModelId.GEMMA_2_2B_IT,
+            quantization_id=QuantizationId.BF16,
+            artifact=HuggingFaceArtifact(
+                repository="google/gemma-2-2b-it",
+                revision="299a8560bedf22ed1c72a8a11e7dce4a7f9f51f8",
+            ),
+            loader=LocalLoaderKind.BF16,
+            context_window=8_192,
         ),
         (
             ModelId.DOLPHIN_MISTRAL_24B_VENICE,

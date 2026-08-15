@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import shlex
+import threading
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -26,6 +28,8 @@ from llm_runtime.registry import (
 from llm_runtime.types import (
     ChatMessage,
     GenerationSettings,
+    GenerationResult,
+    FinishReason,
     ModelId,
     ProviderId,
     QuantizationId,
@@ -33,6 +37,7 @@ from llm_runtime.types import (
 )
 
 MIN_CUDA_FREE_BYTES = 12_000_000_000
+_GENERATION_LOCK = threading.RLock()
 
 
 class Device(StrEnum):
@@ -105,12 +110,12 @@ class TransformersRuntime:
         route: LocalTransformersRoute,
         model: GenerativeModel,
         tokenizer: PreTrainedTokenizerBase,
-        placement: DevicePlacement,
+        placement: DevicePlacement | None = None,
     ) -> None:
         self._route = require_registered_route(route)
         self._model = model
         self._tokenizer = tokenizer
-        self._placement = placement
+        self._placement = placement or DevicePlacement(Device.AUTO, (), (), ())
 
     @property
     def model_id(self) -> ModelId:
@@ -140,7 +145,37 @@ class TransformersRuntime:
         self,
         messages: Sequence[ChatMessage],
         settings: GenerationSettings,
-    ) -> str:
+    ) -> GenerationResult:
+        started = time.perf_counter()
+        with _GENERATION_LOCK:
+            return self._generate_locked(messages, settings, started)
+
+    def _generate_locked(
+        self,
+        messages: Sequence[ChatMessage],
+        settings: GenerationSettings,
+        started: float,
+    ) -> GenerationResult:
+        cpu_state = torch.random.get_rng_state()
+        cuda_devices = (
+            tuple(range(torch.cuda.device_count())) if torch.cuda.is_available() else ()
+        )
+        cuda_states = tuple(torch.cuda.get_rng_state(device) for device in cuda_devices)
+        try:
+            return self._generate_scoped(messages, settings, started, cuda_devices)
+        finally:
+            for device, state in zip(cuda_devices, cuda_states, strict=True):
+                torch.cuda.set_rng_state(state, device)
+            torch.random.set_rng_state(cpu_state)
+
+    def _generate_scoped(
+        self,
+        messages: Sequence[ChatMessage],
+        settings: GenerationSettings,
+        started: float,
+        cuda_devices: tuple[int, ...],
+    ) -> GenerationResult:
+        model_device = self._model.device
         serialized = [
             {"role": message.role.value, "content": message.content}
             for message in messages
@@ -155,15 +190,16 @@ class TransformersRuntime:
                     return_tensors="pt",
                     add_generation_prompt=True,
                 ),
-            ).to(self._model.device)
-        except (IndexError, RuntimeError, ValueError) as error:
+            ).to(model_device)
+        except (IndexError, RuntimeError, ValueError):
             raise TransformersRuntimeError(
                 "Local generation failed while tokenizing typed chat messages in "
                 "llm_runtime.transformers.TransformersRuntime.generate. The "
                 "conversation may be malformed or incompatible with the pinned "
-                "text tokenizer, so generation did not start. Restart with a "
-                f"shorter text-only conversation. Underlying error: {error}"
-            ) from error
+                "text tokenizer, so generation did not start and the caller has no "
+                "response. Verify the registered tokenizer and retry with a shorter "
+                "text-only conversation."
+            ) from None
 
         input_length = batch["input_ids"].shape[-1]
         if input_length + settings.max_new_tokens > self._route.context_window:
@@ -176,30 +212,56 @@ class TransformersRuntime:
                 "max_new_tokens and retry."
             )
 
+        do_sample = settings.temperature > 0
         generation_options: dict[str, object] = {
             "max_new_tokens": settings.max_new_tokens,
-            "do_sample": settings.temperature > 0,
+            "do_sample": do_sample,
         }
-        if settings.temperature > 0:
+        if do_sample:
             generation_options["temperature"] = settings.temperature
+            # Transformers only applies top-p/top-k filtering during sampling.
+            if settings.top_p is not None:
+                generation_options["top_p"] = settings.top_p
+            if settings.top_k is not None:
+                generation_options["top_k"] = settings.top_k
         try:
+            if settings.seed is not None:
+                torch.manual_seed(settings.seed)
+                for device in cuda_devices:
+                    torch.cuda.default_generators[device].manual_seed(settings.seed)
             with torch.inference_mode():
                 generated = self._model.generate(**batch, **generation_options)
-            return cast(
+            completion_ids = tuple(
+                int(value) for value in generated[0][input_length:].tolist()
+            )
+            text = cast(
                 str,
-                self._tokenizer.decode(
-                    generated[0][input_length:], skip_special_tokens=True
-                ),
-            ).strip()
-        except (IndexError, RuntimeError, ValueError) as error:
+                self._tokenizer.decode(list(completion_ids), skip_special_tokens=True),
+            )
+            eos = getattr(self._tokenizer, "eos_token_id", None)
+            finish = (
+                FinishReason.EOS
+                if completion_ids and completion_ids[-1] == eos
+                else FinishReason.LENGTH
+            )
+            return GenerationResult(
+                text,
+                int(input_length),
+                len(completion_ids),
+                completion_ids,
+                finish,
+                max(0, int((time.perf_counter() - started) * 1000)),
+                {},
+            )
+        except (IndexError, RuntimeError, ValueError):
             raise TransformersRuntimeError(
                 "Local generation failed in "
                 "llm_runtime.transformers.TransformersRuntime.generate while "
                 "delegating to the pinned Transformers model. The selected "
                 "device may lack memory or the cached artifact may be incompatible, "
-                "so no response is available. Reduce max_new_tokens, use a safer "
-                f"device, or refresh the pinned cache. Underlying error: {error}"
-            ) from error
+                "so no response is available to the caller. Reduce max_new_tokens, "
+                "use a safer device, or refresh the pinned cache, then retry."
+            ) from None
 
 
 def download_transformers_artifact(

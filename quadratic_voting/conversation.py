@@ -33,6 +33,6 @@ def run_conversation(
             continue
 
         messages.append(ChatMessage(MessageRole.USER, prompt))
-        response = generator.generate(messages, settings)
-        messages.append(ChatMessage(MessageRole.ASSISTANT, response))
-        write_output(f"Model: {response}")
+        result = generator.generate(messages, settings)
+        messages.append(ChatMessage(MessageRole.ASSISTANT, result.raw_text))
+        write_output(f"Model: {result.raw_text}")

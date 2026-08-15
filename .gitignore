@@ -4,3 +4,4 @@ __pycache__/
 *.py[cod]
 secrets_local.py
 .DS_Store
+/worktree/

@@ -86,6 +86,11 @@
         export CMAKE_PREFIX_PATH="${pkgs_.fmt.dev}:$CMAKE_PREFIX_PATH"
         export PKG_CONFIG_PATH="${pkgs_.fmt.dev}/lib/pkgconfig:$PKG_CONFIG_PATH"
         export EXTRA_CCFLAGS="-I/usr/include"
+
+        # Triton otherwise assumes the FHS-only /sbin/ldconfig path.
+        if [[ -d /run/opengl-driver/lib ]]; then
+          export TRITON_LIBCUDA_PATH=/run/opengl-driver/lib
+        fi
       '';
 
       mkEnvFromChannel = (nixpkgs-channel:

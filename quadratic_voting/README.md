@@ -1,8 +1,9 @@
 # Quadratic Voting
 
 This package contains local tools for the quadratic-voting experiments. The
-Gemma runner uses Transformers and PyTorch directly; it does not invoke
-llama.cpp or another external inference executable.
+Gemma runner uses the shared [`llm_runtime`](../llm_runtime/README.md)
+Transformers and PyTorch adapter; it does not invoke llama.cpp or another
+external inference executable.
 
 ## Setup
 
@@ -12,6 +13,10 @@ Run these commands from the repository root:
 uv python install 3.12
 uv sync --locked
 ```
+
+On NixOS, enter `nix develop` first so Triton can find the host NVIDIA driver
+and the shell-provided compiler. Developers on conventional Linux systems can
+use uv directly.
 
 ## Gemma 4 E2B Chat
 
@@ -69,9 +74,10 @@ interfaces.
 
 ```console
 uv run python -m unittest discover -v
-uv run ruff format --check .
-uv run ruff check .
-uv run mypy quadratic_voting
+uv run ruff format --check llm_runtime quadratic_voting
+uv run ruff check llm_runtime quadratic_voting
+uv run mypy llm_runtime quadratic_voting
+uv run mypy --warn-unused-ignores typing_tests/local_activation_boundary.py
 ```
 
 On an NVIDIA system, also run:
@@ -87,3 +93,22 @@ device.
 Set `RUN_HF_INTEGRATION=1` when running the test suite to verify the pinned
 configuration and tokenizer metadata against the Hugging Face Hub without
 downloading model weights.
+
+## Additional Registered Routes
+
+The same `TextGenerator` interface can select the registered OpenRouter route:
+
+```console
+export OPENROUTER_API_KEY=sk-or-...
+uv run python -m quadratic_voting.main \
+  --model dolphin-mistral-24b-venice \
+  --provider openrouter \
+  --quantization none \
+  chat
+```
+
+OpenRouter quantization is undisclosed and remote routes do not expose
+activations. The pinned Compressed Tensors W4A16 artifact remains an unavailable
+candidate with no capabilities until exact weight loading, generation, and
+activation-access validation pass. Unsupported combinations fail during route
+resolution and never fall back to another precision.

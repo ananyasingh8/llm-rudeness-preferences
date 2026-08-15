@@ -8,6 +8,8 @@ import httpx
 
 from llm_runtime import (
     ChatMessage,
+    FinishReason,
+    GenerationResult,
     GenerationSettings,
     MessageRole,
     ModelId,
@@ -30,9 +32,17 @@ class FakeGenerator:
         self,
         messages: Sequence[ChatMessage],
         settings: GenerationSettings,
-    ) -> str:
+    ) -> GenerationResult:
         self.calls.append((tuple(messages), settings))
-        return "hello"
+        return GenerationResult(
+            raw_text="hello",
+            prompt_token_count=1,
+            completion_token_count=1,
+            completion_token_ids=(7,),
+            finish_reason=FinishReason.EOS,
+            duration_ms=1,
+            diagnostics={},
+        )
 
 
 class ConversationTests(unittest.TestCase):

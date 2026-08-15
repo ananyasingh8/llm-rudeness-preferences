@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import TracebackType
+from typing import cast
 
 import httpx
 
@@ -16,10 +18,14 @@ from llm_runtime.types import (
     GenerationError,
     GenerationFailureKind,
     GenerationSettings,
+    GenerationResult,
+    FinishReason,
     MAX_RETRY_DELAY_SECONDS,
     ModelId,
     ProviderId,
     QuantizationId,
+    RuntimeId,
+    UnsupportedSettingError,
 )
 
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -111,7 +117,25 @@ class OpenRouterGenerator:
         self,
         messages: Sequence[ChatMessage],
         settings: GenerationSettings,
-    ) -> str:
+    ) -> GenerationResult:
+        if settings.top_k is not None:
+            raise UnsupportedSettingError(
+                setting="top_k",
+                value=settings.top_k,
+                provider_id=self.provider_id,
+                runtime_id=RuntimeId.OPENAI_COMPATIBLE_HTTP,
+                location="llm_runtime.openrouter.OpenRouterGenerator.generate",
+                alternative_provider_id=ProviderId.LOCAL,
+            )
+        if settings.seed is not None:
+            raise UnsupportedSettingError(
+                setting="seed",
+                value=settings.seed,
+                provider_id=self.provider_id,
+                runtime_id=RuntimeId.OPENAI_COMPATIBLE_HTTP,
+                location="llm_runtime.openrouter.OpenRouterGenerator.generate",
+                alternative_provider_id=ProviderId.LOCAL,
+            )
         request = {
             "model": self._route.model_slug,
             "messages": [
@@ -121,6 +145,9 @@ class OpenRouterGenerator:
             "max_tokens": settings.max_new_tokens,
             "temperature": settings.temperature,
         }
+        if settings.top_p is not None:
+            request["top_p"] = settings.top_p
+        started = time.perf_counter()
         try:
             response = self._client.post(
                 OPENROUTER_CHAT_URL,
@@ -132,9 +159,12 @@ class OpenRouterGenerator:
                 "OpenRouter generation failed during HTTP transport in "
                 "llm_runtime.openrouter.OpenRouterGenerator.generate. The request "
                 "did not produce a response, so the caller has no generated text. "
-                "Check network access and OpenRouter availability, then retry. "
-                f"Transport type: {type(error).__name__}.",
+                "Check network access and OpenRouter availability, then retry.",
                 kind=GenerationFailureKind.TRANSIENT_TRANSPORT,
+                diagnostics={
+                    "error_type": type(error).__name__,
+                    "operation": "http_transport",
+                },
             ) from None
         try:
             response.raise_for_status()
@@ -160,6 +190,10 @@ class OpenRouterGenerator:
                     else GenerationFailureKind.PERMANENT_PROVIDER_STATUS
                 ),
                 retry_after_seconds=retry_after,
+                diagnostics={
+                    "operation": "http_status_validation",
+                    "status": status_code,
+                },
             ) from None
         try:
             payload: object = response.json()
@@ -183,7 +217,66 @@ class OpenRouterGenerator:
                 "unchanged response automatically.",
                 kind=GenerationFailureKind.MALFORMED_PROVIDER_RESPONSE,
             )
-        return content
+        assert isinstance(payload, dict)
+        choice = cast(dict[str, object], cast(list[object], payload["choices"])[0])
+        native_reason_obj = choice.get("finish_reason")
+        native_reason = (
+            native_reason_obj if isinstance(native_reason_obj, str) else None
+        )
+        finish_map = {
+            "stop": FinishReason.STOP_SEQUENCE,
+            "length": FinishReason.LENGTH,
+            "content_filter": FinishReason.CONTENT_FILTER,
+        }
+        finish = (
+            finish_map.get(native_reason, FinishReason.PROVIDER_OTHER)
+            if native_reason is not None
+            else FinishReason.PROVIDER_OTHER
+        )
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            raise OpenRouterRuntimeError(
+                "OpenRouter response validation failed in llm_runtime.openrouter.OpenRouterGenerator.generate because usage metadata was absent; token provenance cannot be persisted. Retry or select a route that returns usage.",
+                kind=GenerationFailureKind.MALFORMED_PROVIDER_RESPONSE,
+            )
+        prompt_tokens_obj = usage.get("prompt_tokens")
+        completion_tokens_obj = usage.get("completion_tokens")
+        prompt_tokens = (
+            prompt_tokens_obj
+            if isinstance(prompt_tokens_obj, int)
+            and not isinstance(prompt_tokens_obj, bool)
+            else None
+        )
+        completion_tokens = (
+            completion_tokens_obj
+            if isinstance(completion_tokens_obj, int)
+            and not isinstance(completion_tokens_obj, bool)
+            else None
+        )
+        if any(
+            isinstance(v, bool) or not isinstance(v, int) or v < 0
+            for v in (prompt_tokens, completion_tokens)
+        ):
+            raise OpenRouterRuntimeError(
+                "OpenRouter response validation failed in llm_runtime.openrouter.OpenRouterGenerator.generate because usage token counts were not non-negative integers; the response cannot be trusted or persisted.",
+                kind=GenerationFailureKind.MALFORMED_PROVIDER_RESPONSE,
+            )
+        diagnostics: dict[str, str | int | float | bool | None] = {}
+        if finish is FinishReason.PROVIDER_OTHER and isinstance(native_reason, str):
+            diagnostics["native_finish_reason"] = native_reason
+        request_id = response.headers.get("x-request-id")
+        if request_id:
+            diagnostics["provider_request_id"] = request_id
+        assert prompt_tokens is not None and completion_tokens is not None
+        return GenerationResult(
+            content,
+            prompt_tokens,
+            completion_tokens,
+            None,
+            finish,
+            max(0, int((time.perf_counter() - started) * 1000)),
+            diagnostics,
+        )
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:

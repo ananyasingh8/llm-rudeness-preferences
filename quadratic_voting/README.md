@@ -70,6 +70,34 @@ are not packed Q4_0 weights. The runner currently uses the high-precision
 checkpoint directly to preserve the standard PyTorch model and activation
 interfaces.
 
+## Resumable Experiment CLI
+
+The durable experiment interface is the module CLI. Mutating commands take the
+common database writer lock before SQLite open or migration; inspection and
+verification open an existing compatible database read-only.
+
+```console
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 migrate
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 catalog ingest --dataset-version convabuse-v1
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 template register
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 sample create --release-id RELEASE --template-id TEMPLATE --size 50 --seed 17
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 sample freeze --sample-id SAMPLE --out samples/repeat-01.json
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 sample verify --sample-id SAMPLE --artifact samples/repeat-01.json
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 matched-set create --config run-config-v1.json
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 run --run-id RUN
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 inspect --run-id RUN
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 verify --run-id RUN
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 export --matched-set MATCHED --out exports/MATCHED
+uv run python -m quadratic_voting.experiment.cli plot --export-dir exports/MATCHED --out plots/MATCHED
+```
+
+Matched-set creation accepts only one strict `qv-run-config/v1` JSON file. The
+file contains the frozen sample artifact path and hash, complete model and
+tokenizer route, six reviewed prompt selectors, sampling and retry policies,
+master seed, voter count, fixed protocol versions, and execution class. Unknown
+fields and JSON type coercion are rejected before SQLite access. Running a run
+again resumes it; there is no resume command or model-visible resume marker.
+
 ## Validation
 
 ```console

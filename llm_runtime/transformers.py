@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import threading
+import time
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
@@ -23,6 +25,8 @@ from llm_runtime.registry import (
 from llm_runtime.types import (
     ChatMessage,
     GenerationSettings,
+    GenerationResult,
+    FinishReason,
     ModelId,
     ProviderId,
     QuantizationId,
@@ -30,6 +34,7 @@ from llm_runtime.types import (
 )
 
 MIN_CUDA_FREE_BYTES = 12_000_000_000
+_GENERATION_LOCK = threading.RLock()
 
 
 class Device(StrEnum):
@@ -99,7 +104,37 @@ class TransformersRuntime:
         self,
         messages: Sequence[ChatMessage],
         settings: GenerationSettings,
-    ) -> str:
+    ) -> GenerationResult:
+        started = time.perf_counter()
+        with _GENERATION_LOCK:
+            return self._generate_locked(messages, settings, started)
+
+    def _generate_locked(
+        self,
+        messages: Sequence[ChatMessage],
+        settings: GenerationSettings,
+        started: float,
+    ) -> GenerationResult:
+        cpu_state = torch.random.get_rng_state()
+        cuda_devices = (
+            tuple(range(torch.cuda.device_count())) if torch.cuda.is_available() else ()
+        )
+        cuda_states = tuple(torch.cuda.get_rng_state(device) for device in cuda_devices)
+        try:
+            return self._generate_scoped(messages, settings, started, cuda_devices)
+        finally:
+            for device, state in zip(cuda_devices, cuda_states, strict=True):
+                torch.cuda.set_rng_state(state, device)
+            torch.random.set_rng_state(cpu_state)
+
+    def _generate_scoped(
+        self,
+        messages: Sequence[ChatMessage],
+        settings: GenerationSettings,
+        started: float,
+        cuda_devices: tuple[int, ...],
+    ) -> GenerationResult:
+        model_device = self._model.device
         serialized = [
             {"role": message.role.value, "content": message.content}
             for message in messages
@@ -114,15 +149,16 @@ class TransformersRuntime:
                     return_tensors="pt",
                     add_generation_prompt=True,
                 ),
-            ).to(self._model.device)
-        except (IndexError, RuntimeError, ValueError) as error:
+            ).to(model_device)
+        except (IndexError, RuntimeError, ValueError):
             raise TransformersRuntimeError(
                 "Local generation failed while tokenizing typed chat messages in "
                 "llm_runtime.transformers.TransformersRuntime.generate. The "
                 "conversation may be malformed or incompatible with the pinned "
-                "text tokenizer, so generation did not start. Restart with a "
-                f"shorter text-only conversation. Underlying error: {error}"
-            ) from error
+                "text tokenizer, so generation did not start and the caller has no "
+                "response. Verify the registered tokenizer and retry with a shorter "
+                "text-only conversation."
+            ) from None
 
         input_length = batch["input_ids"].shape[-1]
         if input_length + settings.max_new_tokens > self._route.context_window:
@@ -135,30 +171,56 @@ class TransformersRuntime:
                 "max_new_tokens and retry."
             )
 
+        do_sample = settings.temperature > 0
         generation_options: dict[str, object] = {
             "max_new_tokens": settings.max_new_tokens,
-            "do_sample": settings.temperature > 0,
+            "do_sample": do_sample,
         }
-        if settings.temperature > 0:
+        if do_sample:
             generation_options["temperature"] = settings.temperature
+            # Transformers only applies top-p/top-k filtering during sampling.
+            if settings.top_p is not None:
+                generation_options["top_p"] = settings.top_p
+            if settings.top_k is not None:
+                generation_options["top_k"] = settings.top_k
         try:
+            if settings.seed is not None:
+                torch.manual_seed(settings.seed)
+                for device in cuda_devices:
+                    torch.cuda.default_generators[device].manual_seed(settings.seed)
             with torch.inference_mode():
                 generated = self._model.generate(**batch, **generation_options)
-            return cast(
+            completion_ids = tuple(
+                int(value) for value in generated[0][input_length:].tolist()
+            )
+            text = cast(
                 str,
-                self._tokenizer.decode(
-                    generated[0][input_length:], skip_special_tokens=True
-                ),
-            ).strip()
-        except (IndexError, RuntimeError, ValueError) as error:
+                self._tokenizer.decode(list(completion_ids), skip_special_tokens=True),
+            )
+            eos = getattr(self._tokenizer, "eos_token_id", None)
+            finish = (
+                FinishReason.EOS
+                if completion_ids and completion_ids[-1] == eos
+                else FinishReason.LENGTH
+            )
+            return GenerationResult(
+                text,
+                int(input_length),
+                len(completion_ids),
+                completion_ids,
+                finish,
+                max(0, int((time.perf_counter() - started) * 1000)),
+                {},
+            )
+        except (IndexError, RuntimeError, ValueError):
             raise TransformersRuntimeError(
                 "Local generation failed in "
                 "llm_runtime.transformers.TransformersRuntime.generate while "
                 "delegating to the pinned Transformers model. The selected "
                 "device may lack memory or the cached artifact may be incompatible, "
-                "so no response is available. Reduce max_new_tokens, use a safer "
-                f"device, or refresh the pinned cache. Underlying error: {error}"
-            ) from error
+                "so no response is available to the caller. Reduce max_new_tokens, "
+                "use a safer device, or refresh the pinned cache, then retry."
+            ) from None
 
 
 def download_transformers_artifact(
@@ -172,7 +234,7 @@ def download_transformers_artifact(
             revision=route.artifact.revision,
             cache_dir=cache_dir,
         )
-    except (HfHubHTTPError, LocalEntryNotFoundError, OSError, TransportError) as error:
+    except (HfHubHTTPError, LocalEntryNotFoundError, OSError, TransportError):
         raise TransformersRuntimeError(
             "Local artifact download failed in "
             "llm_runtime.transformers.download_transformers_artifact while "
@@ -180,8 +242,8 @@ def download_transformers_artifact(
             f"{route.artifact.revision}. The runtime cannot be constructed, "
             "usually because the Hub is unreachable or the cache is not writable. "
             "Check network access and cache permissions, then rerun the QV "
-            f"download command. Underlying error: {error}"
-        ) from error
+            "download command."
+        ) from None
     return Path(snapshot)
 
 
@@ -195,16 +257,16 @@ def _cached_transformers_artifact(
             cache_dir=cache_dir,
             local_files_only=True,
         )
-    except (LocalEntryNotFoundError, OSError) as error:
+    except (LocalEntryNotFoundError, OSError):
         raise TransformersRuntimeError(
             "Local runtime construction failed in "
             "llm_runtime.transformers._cached_transformers_artifact because "
             f"{route.artifact.repository} at revision {route.artifact.revision} "
             f"is incomplete or absent from cache {cache_dir}. No network fallback "
-            "or alternate precision was attempted. Run `uv run python -m "
-            "quadratic_voting.main download` for this route and retry. "
-            f"Underlying error: {error}"
-        ) from error
+            "or alternate precision was attempted, so the runtime is unavailable to "
+            "the caller. Run `uv run python -m quadratic_voting.main download` for "
+            "this route and retry."
+        ) from None
     return Path(snapshot)
 
 
@@ -221,14 +283,14 @@ def resolve_device(requested: Device) -> Device:
     if requested is Device.CUDA:
         try:
             free_bytes, _ = torch.cuda.mem_get_info()
-        except RuntimeError as error:
+        except RuntimeError:
             raise TransformersRuntimeError(
                 "Local runtime device validation failed in "
                 "llm_runtime.transformers.resolve_device while inspecting CUDA "
-                "memory. Safe placement cannot be confirmed, so loading stopped. "
-                "Verify CUDA or select `auto`. "
-                f"Underlying error: {error}"
-            ) from error
+                "memory. Safe placement cannot be confirmed, so loading stopped and "
+                "the caller cannot construct the runtime. Verify CUDA or select "
+                "`auto`, then retry."
+            ) from None
         if free_bytes < MIN_CUDA_FREE_BYTES:
             raise TransformersRuntimeError(
                 "Local runtime device validation failed in "
@@ -281,17 +343,16 @@ def create_transformers_runtime(
             **_loader_options(route, resolved_device),
         )
         model.eval()
-    except (OSError, RuntimeError, ValueError) as error:
+    except (OSError, RuntimeError, ValueError):
         raise TransformersRuntimeError(
             "Local runtime loading failed in "
             "llm_runtime.transformers.create_transformers_runtime while loading "
             f"{route.quantization_id.value} from {model_path} on "
             f"{resolved_device.value}. The cache may be incomplete, the device "
             "may lack memory, or the installed runtime may be incompatible, so "
-            "generation and activation access are unavailable. Run `uv sync "
-            "--locked`, verify the pinned cache, and retry with `auto` or `cpu`. "
-            f"Underlying error: {error}"
-        ) from error
+            "generation and activation access are unavailable to the caller. Run `uv "
+            "sync --locked`, verify the pinned cache, and retry with `auto` or `cpu`."
+        ) from None
     return TransformersRuntime(
         route,
         cast(GenerativeModel, model),

@@ -13,6 +13,8 @@ dependencies = [
     "numpy>=2.5.2",
     "torch>=2.13.0",
     "transformers>=5.5.0",
+    "pydantic>=2.13.4",
+    "pyarrow>=25.0.1",
 ]
 
 [dependency-groups]

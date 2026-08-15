@@ -7,6 +7,7 @@ import httpx
 
 from llm_runtime import (
     ChatMessage,
+    FinishReason,
     GenerationFailureKind,
     GenerationSettings,
     MessageRole,
@@ -22,6 +23,7 @@ from llm_runtime.openrouter import (
     create_openrouter_generator,
     openrouter_credentials_from_env,
 )
+from llm_runtime.types import UnsupportedSettingError
 
 
 class OpenRouterTests(unittest.TestCase):
@@ -47,7 +49,13 @@ class OpenRouterTests(unittest.TestCase):
             )
             return httpx.Response(
                 200,
-                json={"choices": [{"message": {"content": "Hi there"}}]},
+                headers={"x-request-id": "request-safe-123"},
+                json={
+                    "choices": [
+                        {"message": {"content": "Hi there"}, "finish_reason": "stop"}
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
             )
 
         route = cast(
@@ -68,7 +76,14 @@ class OpenRouterTests(unittest.TestCase):
                 GenerationSettings(max_new_tokens=20, temperature=0.25),
             )
 
-        self.assertEqual(response, "Hi there")
+        self.assertEqual(response.raw_text, "Hi there")
+        self.assertEqual(response.prompt_token_count, 4)
+        self.assertEqual(response.completion_token_count, 2)
+        self.assertIsNone(response.completion_token_ids)
+        self.assertIs(response.finish_reason, FinishReason.STOP_SEQUENCE)
+        self.assertEqual(
+            response.diagnostics, {"provider_request_id": "request-safe-123"}
+        )
         self.assertNotIn(secret, repr(credentials))
 
         def reject(request: httpx.Request) -> httpx.Response:
@@ -107,6 +122,82 @@ class OpenRouterTests(unittest.TestCase):
             openrouter_credentials_from_env({})
         self.assertNotIn(secret, str(missing.exception))
 
+    def test_sampling_settings_are_propagated_or_rejected_before_http(self) -> None:
+        route = cast(
+            OpenRouterRoute,
+            resolve_route(
+                ModelId.DOLPHIN_MISTRAL_24B_VENICE,
+                ProviderId.OPENROUTER,
+                None,
+            ),
+        )
+        credentials = OpenRouterCredentials("secret")
+        request_bodies: list[object] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            request_bodies.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": "sampled"}, "finish_reason": "length"}
+                    ],
+                    "usage": {"prompt_tokens": 3, "completion_tokens": 5},
+                },
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+            response = create_openrouter_generator(
+                route, credentials=credentials, http_client=client
+            ).generate(
+                [ChatMessage(MessageRole.USER, "Hello")],
+                GenerationSettings(
+                    max_new_tokens=20,
+                    temperature=0.25,
+                    top_p=0.9,
+                ),
+            )
+
+        self.assertEqual(response.raw_text, "sampled")
+        self.assertIs(response.finish_reason, FinishReason.LENGTH)
+        self.assertEqual(
+            request_bodies,
+            [
+                {
+                    "model": (
+                        "cognitivecomputations/dolphin-mistral-24b-venice-edition"
+                    ),
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "max_tokens": 20,
+                    "temperature": 0.25,
+                    "top_p": 0.9,
+                }
+            ],
+        )
+
+        client = MagicMock(spec=httpx.Client)
+        generator = create_openrouter_generator(
+            route, credentials=credentials, http_client=client
+        )
+        for field_name, settings in (
+            ("top_k", GenerationSettings(max_new_tokens=20, top_k=40)),
+            ("seed", GenerationSettings(max_new_tokens=20, seed=123)),
+        ):
+            with self.subTest(field_name=field_name):
+                with self.assertRaisesRegex(
+                    UnsupportedSettingError,
+                    rf"{field_name}=.*before any provider request.*Set "
+                    rf"{field_name}=None or use provider local",
+                ) as rejected:
+                    generator.generate(
+                        [ChatMessage(MessageRole.USER, "Hello")], settings
+                    )
+                self.assertEqual(
+                    rejected.exception.kind,
+                    GenerationFailureKind.CONFIGURATION,
+                )
+        client.post.assert_not_called()
+
     def test_malformed_transport_and_client_lifecycle(self) -> None:
         route = cast(
             OpenRouterRoute,
@@ -121,7 +212,7 @@ class OpenRouterTests(unittest.TestCase):
         settings = GenerationSettings(max_new_tokens=5)
 
         def transport_failure(request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError("offline", request=request)
+            raise httpx.ConnectError("offline sk-secret", request=request)
 
         with (
             httpx.Client(transport=httpx.MockTransport(transport_failure)) as client,
@@ -135,9 +226,14 @@ class OpenRouterTests(unittest.TestCase):
             GenerationFailureKind.TRANSIENT_TRANSPORT,
         )
         self.assertTrue(transport_error.exception.retryable)
+        self.assertNotIn("sk-secret", str(transport_error.exception))
+        self.assertEqual(
+            transport_error.exception.diagnostics,
+            {"error_type": "ConnectError", "operation": "http_transport"},
+        )
 
         def malformed(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, content=b"not-json", request=request)
+            return httpx.Response(200, content=b"not-json sk-secret", request=request)
 
         with (
             httpx.Client(transport=httpx.MockTransport(malformed)) as client,
@@ -151,6 +247,7 @@ class OpenRouterTests(unittest.TestCase):
             GenerationFailureKind.MALFORMED_PROVIDER_RESPONSE,
         )
         self.assertFalse(malformed_error.exception.retryable)
+        self.assertNotIn("sk-secret", str(malformed_error.exception))
 
         def rate_limited(request: httpx.Request) -> httpx.Response:
             return httpx.Response(

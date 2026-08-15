@@ -29,7 +29,13 @@ import pandas as pd
 import requests
 
 import config
-from prompts.bail_methods import ORDERINGS, get_bail_prompt, get_bail_prompt_status
+from prompts.bail_methods import (
+    ORDERINGS,
+    called_bail_tool,
+    get_bail_prompt,
+    get_bail_prompt_status,
+    get_bail_tool,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("convabuse_run")
@@ -67,20 +73,25 @@ def build_sample() -> pd.DataFrame:
     return sample
 
 
-def build_messages(row, ordering: str) -> list[dict]:
+def build_messages(row, ordering: str | None) -> list[dict]:
+    """Conversation turns; wellbeing check appended unless ordering is None
+    (tool phase replays the conversation bare, with the bail tool attached)."""
     messages = []
     for col, role in TRANSCRIPT_TURNS:
         text = row.get(col)
         if pd.isna(text) or not str(text).strip():
             continue
         messages.append({"role": role, "content": str(text)})
-    messages.append({"role": "user", "content": get_bail_prompt(ordering)})
+    if ordering is not None:
+        messages.append({"role": "user", "content": get_bail_prompt(ordering)})
     return messages
 
 
 def call_one(session: requests.Session, req: dict) -> dict:
     payload = {"model": config.BAIL_MODEL, "messages": req["messages"],
                "max_tokens": config.BAIL_MAX_TOKENS}
+    if req.get("tools"):
+        payload["tools"] = req["tools"]
     last_err = None
     for attempt in range(config.API_MAX_RETRIES + 1):
         try:
@@ -91,15 +102,22 @@ def call_one(session: requests.Session, req: dict) -> dict:
             body = resp.json()
             if "error" in body and "choices" not in body:
                 raise RuntimeError(str(body["error"])[:200])
-            text = (body["choices"][0]["message"].get("content")) or ""
-            return {**req["meta"], "error": None, "response_text": text,
-                    "wellbeing": get_bail_prompt_status(text) if text else "?"}
+            msg = body["choices"][0]["message"]
+            text = msg.get("content") or ""
+            out = {**req["meta"], "error": None, "response_text": text}
+            if req.get("tools"):
+                out["tool_called"] = called_bail_tool(msg)
+                out["wellbeing"] = None
+            else:
+                out["tool_called"] = None
+                out["wellbeing"] = get_bail_prompt_status(text) if text else "?"
+            return out
         except Exception as e:
             last_err = e
             if attempt < config.API_MAX_RETRIES:
                 time.sleep(min(2 ** attempt, 30))
     return {**req["meta"], "error": f"{type(last_err).__name__}: {last_err}",
-            "response_text": "", "wellbeing": None}
+            "response_text": "", "wellbeing": None, "tool_called": None}
 
 
 def _flush(rows: list[dict]) -> None:
@@ -113,10 +131,22 @@ def _flush(rows: list[dict]) -> None:
     new.to_parquet(RESULTS, index=False)
 
 
-def cmd_run(limit: int = 0) -> None:
+def cmd_run(limit: int = 0, phase: str = "prompt") -> None:
+    global RESULTS
     sample = build_sample()
     reqs = []
     for _, row in sample.iterrows():
+        if phase == "tool":
+            for s in range(N_SAMPLES):
+                cid = f"convtool|{row['example_no']}|{s}"
+                reqs.append({"messages": build_messages(row, None),
+                             "tools": [get_bail_tool(config.BAIL_MODEL_NAME)],
+                             "meta": {"custom_id": cid,
+                                      "example_no": row["example_no"],
+                                      "abuse_severity": row["abuse_severity"],
+                                      "group": row["group"],
+                                      "ordering": None, "sample": s}})
+            continue
         for ordering in ORDERINGS:
             for s in range(N_SAMPLES):
                 cid = f"conv|{row['example_no']}|{ordering}|{s}"
@@ -126,6 +156,8 @@ def cmd_run(limit: int = 0) -> None:
                                       "abuse_severity": row["abuse_severity"],
                                       "group": row["group"],
                                       "ordering": ordering, "sample": s}})
+    if phase == "tool":
+        RESULTS = os.path.join(config.RESULTS_DIR, "convabuse_tool.parquet")
     if limit:
         reqs = reqs[:limit]
     done: set[str] = set()
@@ -160,8 +192,9 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--limit", type=int, default=0)
+    r.add_argument("--phase", choices=["prompt", "tool"], default="prompt")
     args = p.parse_args()
-    cmd_run(args.limit)
+    cmd_run(args.limit, args.phase)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,24 @@
+{
+  "batches": [
+    {
+      "id": "batch-1786764968-Qzi5Z7LmzMLvSfW2ilcF",
+      "chunk": "smoke",
+      "n_requests": 100
+    },
+    {
+      "id": "batch-1786765194-bl3TF9GW3INMTcYiOQq6",
+      "chunk": 0,
+      "n_requests": 1000
+    },
+    {
+      "id": "batch-1786765195-U9yzg1Lpwfo2CF3DsRCm",
+      "chunk": 1,
+      "n_requests": 1000
+    },
+    {
+      "id": "batch-1786765197-YyO9gKPNPsAAkC4J7YKg",
+      "chunk": 2,
+      "n_requests": 905
+    }
+  ]
+}

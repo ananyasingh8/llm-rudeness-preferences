@@ -70,6 +70,47 @@ runs pick up where they left off. `analyze` writes its tables and charts into th
 Expect the convabuse-31b run to take ~30–90 minutes on a 24 GB GPU (4,185 forward passes
 through a quantized 31B model); bailbench-2b takes a few minutes.
 
+### Running on Alliance Fir
+
+[`fir.slurm`](fir.slurm) requests one H100, 64 GB of system memory, four CPUs, and two
+hours. It assumes that `.venv` and the model cache have already been created on Fir's shared
+storage; compute nodes run offline and do not install packages or download checkpoints.
+Create `.venv` on a Fir login node using DRAC's configured wheelhouse:
+
+```
+bash scripts/setup-fir.sh
+```
+
+The setup fails if DRAC does not provide an exact version pinned by `uv.lock`. To use DRAC
+wheels where available and permit PyPI as a fallback for missing packages, run
+`bash scripts/setup-fir.sh --allow-pypi` on the login node.
+
+From the repository root, submit it with your allocation on the command line:
+
+```
+sbatch --account=<allocation> emotion_probing/fir.slurm
+```
+
+The model cache defaults to `$SCRATCH/huggingface`. Override it when the checkpoint was
+downloaded elsewhere. Environment variables passed to `sbatch` select common run modes:
+
+```
+# Ten-example end-to-end smoke test
+LIMIT=10 sbatch --account=<allocation> emotion_probing/fir.slurm
+
+# Resume the latest incomplete ConvAbuse run
+RESUME=1 sbatch --account=<allocation> emotion_probing/fir.slurm
+
+# Run BailBench using an explicit cache location
+EXPERIMENT=bailbench-2b MODEL_CACHE_DIR=/project/<allocation>/models \
+  sbatch --account=<allocation> emotion_probing/fir.slurm
+```
+
+Set `PYTHON_MODULE` if Fir's available Python 3.12 module has a more specific name, for
+example `PYTHON_MODULE=python/3.12.4`. Do not combine `LIMIT` with `RESUME`: a limited run
+has a different task set and should remain separate from a full resumable run. Slurm writes
+the job log to `slurm-emotion-probing-<job-id>.out` in the submission directory.
+
 ## What analyze produces
 
 Printed tables + `analysis.csv` + charts in `<run>/figures/`:

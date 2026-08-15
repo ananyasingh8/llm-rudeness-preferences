@@ -341,7 +341,7 @@ class EmotionProbeTests(unittest.TestCase):
             current = self._provenance(runtime)
             with patch("emotion_probing.main.RESULTS_DIR", results):
                 selected = prepare_run_dir(config, True)
-                with _run_writer_lock(run_dir, timeout_seconds=0):
+                with _run_writer_lock(run_dir):
                     keys = _require_resume_compatible(
                         run_dir, current, columns, ["example_id"]
                     )
@@ -378,7 +378,7 @@ class EmotionProbeTests(unittest.TestCase):
                 ),
             ):
                 selected = prepare_run_dir(config, True)
-                with _run_writer_lock(selected, timeout_seconds=0):
+                with _run_writer_lock(selected):
                     _require_resume_compatible(
                         selected, current, columns, ["example_id"]
                     )
@@ -563,7 +563,7 @@ class EmotionProbeTests(unittest.TestCase):
                 current[field] = "changed"
                 with (
                     self.assertRaisesRegex(ProbeError, field),
-                    _run_writer_lock(run_dir, timeout_seconds=0),
+                    _run_writer_lock(run_dir),
                 ):
                     _require_resume_compatible(
                         run_dir, current, columns, ["example_id"]
@@ -641,22 +641,22 @@ class EmotionProbeTests(unittest.TestCase):
                 original["historical_extraction_model_revision"], "unknown"
             )
 
-    def test_concurrent_writer_timeout_and_lock_cleanup_on_error(self) -> None:
+    def test_concurrent_writer_fails_fast_and_lock_cleans_up_on_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory)
             lock_path = run_dir / ".writer.lock"
             lock_path.write_text("other writer", encoding="utf-8")
             with self.assertRaisesRegex(
                 ProbeError,
-                "lock acquisition timed out.*Another process.*remove that exact lock",
+                "failed immediately.*Another process.*remove that exact lock",
             ):
-                with _run_writer_lock(run_dir, timeout_seconds=0):
+                with _run_writer_lock(run_dir):
                     self.fail("existing writer lock must not be acquired")
             self.assertEqual(lock_path.read_text(encoding="utf-8"), "other writer")
 
             lock_path.unlink()
             with self.assertRaisesRegex(RuntimeError, "synthetic writer error"):
-                with _run_writer_lock(run_dir, timeout_seconds=0):
+                with _run_writer_lock(run_dir):
                     raise RuntimeError("synthetic writer error")
             self.assertFalse(lock_path.exists())
 

@@ -47,7 +47,6 @@ import os
 import platform
 import sys
 import tempfile
-import time
 from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -165,7 +164,6 @@ GEMOTIONS_ANALYSIS_FILE = (
 )
 PROBE_SOURCE_FILE = Path(__file__)
 RUN_WRITER_LOCK_NAME = ".writer.lock"
-RUN_WRITER_LOCK_TIMEOUT_SECONDS = 5.0
 HASH_CHUNK_BYTES = 1024 * 1024
 
 
@@ -641,50 +639,47 @@ def _atomic_write_json(
 
 
 @contextmanager
-def _run_writer_lock(
-    run_dir: Path, *, timeout_seconds: float = RUN_WRITER_LOCK_TIMEOUT_SECONDS
-) -> Iterator[None]:
-    """Acquire one atomic, bounded writer lock scoped to a single run directory."""
+def _run_writer_lock(run_dir: Path) -> Iterator[None]:
+    """Acquire one atomic, fail-fast writer lock for a single run directory."""
     lock_path = run_dir / RUN_WRITER_LOCK_NAME
-    deadline = time.monotonic() + max(timeout_seconds, 0.0)
-    descriptor: int | None = None
-    while descriptor is None:
+    try:
+        descriptor = os.open(
+            lock_path,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            0o600,
+        )
+    except FileExistsError as error:
+        raise ProbeError(
+            "Run writer lock acquisition failed immediately in "
+            "emotion_probing.main._run_writer_lock before resume checks or result "
+            f"mutation because {lock_path} already exists. Another process may be "
+            "writing this run, so appending now could corrupt CSV/provenance "
+            "consistency. Retry after that writer finishes; if no process owns the "
+            "stale lock, remove that exact lock file and retry."
+        ) from error
+    except OSError as error:
+        raise ProbeError(
+            "Run writer lock acquisition failed in "
+            "emotion_probing.main._run_writer_lock before result mutation "
+            f"because {lock_path} could not be created atomically. No scores "
+            "or provenance were changed. Check directory permissions and free "
+            f"disk space, then retry. Underlying error: {error}"
+        ) from error
+    try:
+        os.write(descriptor, f"pid={os.getpid()}\n".encode())
+    except OSError as error:
+        os.close(descriptor)
         try:
-            descriptor = os.open(
-                lock_path,
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                0o600,
-            )
-            try:
-                os.write(descriptor, f"pid={os.getpid()}\n".encode())
-            except OSError:
-                os.close(descriptor)
-                descriptor = None
-                try:
-                    lock_path.unlink()
-                except OSError:
-                    pass
-                raise
-        except FileExistsError as error:
-            if time.monotonic() >= deadline:
-                raise ProbeError(
-                    "Run writer lock acquisition timed out in "
-                    "emotion_probing.main._run_writer_lock before resume checks "
-                    f"or result mutation because {lock_path} already exists. "
-                    "Another process may be writing this run, so appending now "
-                    "could corrupt CSV/provenance consistency. Wait for that writer "
-                    "to finish; if no process owns the stale lock, remove that exact "
-                    "lock file and retry."
-                ) from error
-            time.sleep(0.05)
-        except OSError as error:
-            raise ProbeError(
-                "Run writer lock acquisition failed in "
-                "emotion_probing.main._run_writer_lock before result mutation "
-                f"because {lock_path} could not be created atomically. No scores "
-                "or provenance were changed. Check directory permissions and free "
-                f"disk space, then retry. Underlying error: {error}"
-            ) from error
+            lock_path.unlink()
+        except OSError:
+            pass
+        raise ProbeError(
+            "Run writer lock initialization failed in "
+            "emotion_probing.main._run_writer_lock after atomic acquisition "
+            f"because ownership metadata could not be written to {lock_path}. "
+            "The lock was released and no run files were changed. Check filesystem "
+            f"health and retry. Underlying error: {error}"
+        ) from error
     try:
         yield
     finally:

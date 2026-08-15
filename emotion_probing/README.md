@@ -141,10 +141,10 @@ provenance or the CSV schema differs, preserves the original run metadata, and
 retains the maximum measured CUDA peaks across continuations. `analyze` writes
 its tables and charts into the same folder.
 
-The runner displays a task progress bar and checkpoints score rows to CSV in
-batches of 50. An interrupted process can therefore recompute at most the final
-49 uncheckpointed rows when resumed, instead of paying for a file flush after
-every model forward.
+The runner displays a task progress bar and flushes each completed score row to
+CSV. Resume therefore restarts from the next unfinished prompt after an
+interruption. Model inference remains batch size one to preserve the recorded
+probing configuration.
 
 Resume also validates every existing score row (exact field count, nonblank
 unique task key, positive integer token count, and finite numeric emotion

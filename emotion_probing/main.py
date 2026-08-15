@@ -165,7 +165,6 @@ GEMOTIONS_ANALYSIS_FILE = (
 )
 PROBE_SOURCE_FILE = Path(__file__)
 RUN_WRITER_LOCK_NAME = ".writer.lock"
-SCORE_CHECKPOINT_ROWS = 50
 HASH_CHUNK_BYTES = 1024 * 1024
 
 
@@ -1244,7 +1243,6 @@ def run_probe(
                 writer = csv.DictWriter(handle, fieldnames=columns)
                 if write_header:
                     writer.writeheader()
-                pending_rows: list[dict[str, object]] = []
                 with tqdm(
                     pending_tasks,
                     total=len(tasks),
@@ -1264,14 +1262,8 @@ def run_probe(
                         )
                         row["n_tokens"] = n_tokens
                         row |= dict(zip([f"score_{name}" for name in names], scores))
-                        pending_rows.append(row)
-                        if len(pending_rows) == SCORE_CHECKPOINT_ROWS:
-                            writer.writerows(pending_rows)
-                            handle.flush()
-                            pending_rows.clear()
-                if pending_rows:
-                    writer.writerows(pending_rows)
-                    handle.flush()
+                        writer.writerow(row)
+                        handle.flush()
         finally:
             persist_cuda_peaks(run_dir, measured_cuda)
     print(f"Results written to {scores_file}")

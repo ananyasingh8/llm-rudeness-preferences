@@ -1,11 +1,14 @@
 """Closed model registry and provider-independent text generation contracts."""
 
 from llm_runtime.registry import (
+    BitsAndBytes4BitSettings,
+    FourBitQuantType,
     LocalTransformersRoute,
     ModelRoute,
     ModelRouteError,
     OpenRouterRoute,
     RouteAvailability,
+    TorchDTypeId,
     registered_routes,
     resolve_route,
 )
@@ -26,10 +29,12 @@ from llm_runtime.types import (
 
 __all__ = [
     "Capability",
+    "BitsAndBytes4BitSettings",
     "ChatMessage",
     "GenerationError",
     "GenerationFailureKind",
     "GenerationSettings",
+    "FourBitQuantType",
     "MAX_RETRY_DELAY_SECONDS",
     "LocalTransformersRoute",
     "MessageRole",
@@ -42,6 +47,7 @@ __all__ = [
     "RouteAvailability",
     "RuntimeId",
     "TextGenerator",
+    "TorchDTypeId",
     "registered_routes",
     "resolve_route",
 ]

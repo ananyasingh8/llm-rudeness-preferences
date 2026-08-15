@@ -113,7 +113,7 @@ Current enum values are:
 |---|---|
 | `ModelId` | `GEMMA_4_E2B_IT`, `GEMMA_4_31B_IT`, `GEMMA_2_2B_IT`, `DOLPHIN_MISTRAL_24B_VENICE` |
 | `ProviderId` | `LOCAL`, `OPENROUTER` |
-| `QuantizationId` | `BF16`, `W4A16_COMPRESSED_TENSORS` |
+| `QuantizationId` | `BF16`, `W4A16_COMPRESSED_TENSORS`, `BITSANDBYTES_FP4` |
 | `RuntimeId` | `TRANSFORMERS`, `OPENAI_COMPATIBLE_HTTP` |
 | `Capability` | `TEXT_GENERATION`, `LOCAL_ACTIVATIONS` |
 | `MessageRole` | `SYSTEM`, `USER`, `ASSISTANT` |
@@ -171,6 +171,7 @@ The registry currently contains:
 |---|---|---|---|---|---|
 | `GEMMA_4_E2B_IT` | `LOCAL` | `BF16` | `TRANSFORMERS` | enabled | text generation, local activations |
 | `GEMMA_4_E2B_IT` | `LOCAL` | `W4A16_COMPRESSED_TENSORS` | `TRANSFORMERS` | unavailable | none |
+| `GEMMA_4_31B_IT` | `LOCAL` | `BITSANDBYTES_FP4` | `TRANSFORMERS` | enabled | text generation, local activations |
 | `GEMMA_4_31B_IT` | `LOCAL` | `W4A16_COMPRESSED_TENSORS` | `TRANSFORMERS` | enabled | text generation, local activations |
 | `GEMMA_2_2B_IT` | `LOCAL` | `BF16` | `TRANSFORMERS` | enabled | text generation, local activations |
 | `DOLPHIN_MISTRAL_24B_VENICE` | `OPENROUTER` | `None` | `OPENAI_COMPATIBLE_HTTP` | enabled | text generation |
@@ -225,13 +226,27 @@ falls back to BF16.
   dependency); ~17–18 GB of weights on a 24 GB GPU
 - Capabilities: text generation and local activations
 
-This route exists for the emotion-probing experiment on ConvAbuse: the
-gemotions emotion vectors (dejanseo/gemotions) were extracted from the 4-bit
-quantized 31B model, so the quantized runtime matches the extraction
-conditions. Enabled by team decision (unlike the E2B W4A16 candidate below,
-which stays unavailable): the first `--limit` smoke run on the GPU operator's
-machine is the real weight-loading, generation, and activation-access
-validation for this exact pinned revision. The repository is not gated.
+This older route remains available for existing callers, but Compressed Tensors
+W4A16 is not the reviewed extraction-compatible ConvAbuse route. The gemotions
+source loaded the base model through BitsAndBytes, and different 4-bit formats
+must not be treated as numerically equivalent. The repository is not gated.
+
+### BitsAndBytes FP4 Gemma 4 31B Route
+
+- Repository: `google/gemma-4-31B-it`
+- Revision: `842da3794eaa0b77d5f08bae87a17459d91ff475`
+- Loader: locked direct `bitsandbytes` dependency through Transformers
+- Recipe: `load_in_4bit=True`, FP4, BF16 compute, UINT8 quantized storage, and
+  `bnb_4bit_use_double_quant=False`
+- Placement: requested and resolved maps are recorded; this reviewed route
+  rejects CPU/disk placement rather than silently offloading
+- Capabilities: text generation and local activations
+
+This route is the closed `convabuse-31b` probing route. Cache-only construction
+preserves the real model and tokenizer. The full base repository requires 60+ GB
+of download/cache/disk capacity even though weights are quantized during load.
+Fit on the target 24 GB RTX 4090 remains pending a separately authorized measured
+smoke run; no measured fit or numerical-equivalence claim is made here.
 
 ### BF16 Gemma 2 Route
 
@@ -292,6 +307,7 @@ runtime = create_transformers_runtime(
 ```python
 runtime.model      # torch.nn.Module
 runtime.tokenizer  # PreTrainedTokenizerBase
+runtime.placement  # requested/resolved device map and CPU/disk offload state
 ```
 
 Future emotion-probe code should require `LocalActivationRuntime`. The checked
@@ -347,13 +363,21 @@ defaults.
 
 ### Emotion Probes
 
-`emotion_probing.main` resolves the Gemma 2 BF16 route with
-`required={Capability.LOCAL_ACTIVATIONS}` and reads activations through the
-`LocalActivationRuntime` protocol (`runtime.model` / `runtime.tokenizer`). A
+`emotion_probing.main` resolves the Gemma 2 BF16 or Gemma 4 31B BitsAndBytes FP4
+route with `required={Capability.LOCAL_ACTIVATIONS}` and reads activations through
+the `LocalActivationRuntime` protocol (`runtime.model` / `runtime.tokenizer`). A
 remote route fails before the experiment starts, while static typing rejects a
 remote generator assignment. The probe also verifies that its emotion-vectors
 file was extracted from the exact repository the resolved route loads. See
 [`emotion_probing/README.md`](../emotion_probing/README.md).
+
+For ConvAbuse, the scoped hook captures only decoder block 40 output, checks
+batch one/rank/5,376 width/the 512-token bound, and selects the final prompt
+token. Runs use `torch.inference_mode()` and `use_cache=False`. Provenance records
+the exact recipe and package versions, placement/offload state, and synchronized
+CUDA peak allocated/reserved bytes. The historical extraction source omitted
+FP4/storage/double-quant and exact versions, so this likely-default reviewed route
+does not prove numerical equivalence to those historical activations.
 
 ### Bail Behavior
 
@@ -433,10 +457,10 @@ Triton does not assume the FHS-only `/sbin/ldconfig` path.
 
 ## Non-Goals
 
-- Implementing Bail classification, emotion probes, or QV voting mechanics.
+- Implementing Bail classification, vector re-extraction, or QV voting mechanics.
 - A plugin system, service locator, or provider/model class hierarchy.
 - Arbitrary user-provided model or quantization strings.
-- Runtime quantization recipes or on-the-fly quantization parameters.
+- User-supplied runtime quantization recipes or parameters outside static routes.
 - Streaming, batching, multimodal input, embeddings, log probabilities, tools,
   or cost accounting before an experiment requires them.
 - A remote activation API.

@@ -22,6 +22,7 @@ from emotion_probing.analyze.common import (
     MUTED,
     NEUTRAL_MID,
     SERIES_1,
+    SERIES_2,
     SEVERITY_BAND_LABELS,
     SEVERITY_BAND_ORDER,
     SEVERITY_RAMP,
@@ -41,6 +42,12 @@ from emotion_probing.analyze.maps import cluster_map, pca_map
 TOP_N = 10
 # All severity shifts are measured against this band.
 BASELINE_BAND = 0
+# A synthetic extra band: all abusive-band examples pooled together. Kept
+# disjoint from BASELINE_BAND so its shift vs the baseline is a clean
+# independent-groups comparison.
+POOLED_BAND = "avg"
+POOLED_MEMBERS = (-1, -2, -3)
+BAND_LABELS = {**SEVERITY_BAND_LABELS, POOLED_BAND: "avg (-1 to -3)"}
 ABUSE_TYPES = (
     ("sex_harassment", "sexual harassment"),
     ("intellectual", "intellectual"),
@@ -85,11 +92,18 @@ def analyze_convabuse(run_dir: Path) -> None:
     coordinates = load_pca_coordinates(int(run_info["probe_layer"]))
     examples = _parse_examples(emotions, raw_rows)
 
-    band_groups = {
+    band_groups: dict[object, list] = {
         band: [e for e in examples if e["band"] == band]
         for band in SEVERITY_BAND_ORDER
     }
-    bands = [b for b in SEVERITY_BAND_ORDER if len(band_groups[b]) >= MIN_GROUP_SIZE]
+    band_groups[POOLED_BAND] = [
+        e for e in examples if e["band"] in POOLED_MEMBERS
+    ]
+    bands = [
+        b
+        for b in (*SEVERITY_BAND_ORDER, POOLED_BAND)
+        if len(band_groups[b]) >= MIN_GROUP_SIZE
+    ]
     if BASELINE_BAND not in bands:
         raise SystemExit(
             f"error: not enough baseline (band {BASELINE_BAND}) examples yet."
@@ -115,7 +129,8 @@ def analyze_convabuse(run_dir: Path) -> None:
         return band_stats[band][name]["mean"] - baseline[name]["mean"]
 
     # ---- printed summary + analysis.csv (sorted by the -3 vs 1 shift) ------
-    focus_band = -3 if -3 in bands else bands[-1]
+    real_bands = [b for b in bands if b != POOLED_BAND]
+    focus_band = -3 if -3 in bands else real_bands[-1]
     order = sorted(emotions, key=lambda n: shift(focus_band, n), reverse=True)
     print(
         f"\nTop {TOP_N} rising emotions "
@@ -180,7 +195,7 @@ def analyze_convabuse(run_dir: Path) -> None:
     # ---- figure set 1: per severity band ------------------------------------
     for band in bands:
         band_dir = figures / "bands"
-        label = SEVERITY_BAND_LABELS[band]
+        label = BAND_LABELS[band]
         if band == BASELINE_BAND:
             # Baseline band: the raw resting profile, not a shift.
             top = sorted(
@@ -216,7 +231,7 @@ def analyze_convabuse(run_dir: Path) -> None:
                 [f"{n} — {cluster_of.get(n, '?')}" for n in movers],
                 [shift(band, n) for n in movers],
                 [sem_diff(band_stats[band][n], baseline[n]) for n in movers],
-                f"mean score shift vs band {SEVERITY_BAND_LABELS[BASELINE_BAND]}",
+                f"mean score shift vs band {BAND_LABELS[BASELINE_BAND]}",
                 f"Band {label}: top rising and falling emotions",
                 band_dir / f"band_{band}_movers.png",
                 6.5,
@@ -284,7 +299,7 @@ def analyze_convabuse(run_dir: Path) -> None:
     axes.set_yticks(range(len(order)))
     axes.set_yticklabels(order, fontsize=4.5)
     axes.set_xticks(range(len(bands)))
-    axes.set_xticklabels([SEVERITY_BAND_LABELS[b] for b in bands], fontsize=8)
+    axes.set_xticklabels([BAND_LABELS[b] for b in bands], fontsize=7)
     axes.set_title(
         f"All emotions: activation shift vs band {BASELINE_BAND}, by severity",
         color=INK, loc="left", pad=12,
@@ -300,12 +315,16 @@ def analyze_convabuse(run_dir: Path) -> None:
     bar_height = 0.8 / len(bands)
     positions = range(len(chosen))
     for j, band in enumerate(bands):
+        if band == POOLED_BAND:
+            color = SERIES_2  # the synthetic average stands apart from the ramp
+        else:
+            color = SEVERITY_RAMP[SEVERITY_BAND_ORDER.index(band)]
         axes.barh(
             [i + (j - len(bands) / 2 + 0.5) * bar_height for i in positions],
             [band_stats[band][n]["mean"] for n in chosen],
             height=bar_height * 0.92,
-            color=SEVERITY_RAMP[j],
-            label=SEVERITY_BAND_LABELS[band],
+            color=color,
+            label=BAND_LABELS[band],
         )
     axes.set_yticks(list(positions))
     axes.set_yticklabels(

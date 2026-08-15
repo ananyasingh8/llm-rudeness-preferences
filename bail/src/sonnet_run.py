@@ -182,6 +182,97 @@ def cmd_run(phase: str, condition: str, limit: int = 0) -> None:
     log.info("done: %d calls, %d failed (failed rows retry on re-run)", n_done, n_fail)
 
 
+# ---------------------------------------------------------------------------
+# Anthropic Batches API (50% off) -- used for the bail-prompt phase.
+# ---------------------------------------------------------------------------
+
+SONNET_BATCH_REGISTRY = os.path.join(config.BATCHES_DIR, "sonnet_batches.json")
+
+
+def _batch_registry() -> dict:
+    if os.path.exists(SONNET_BATCH_REGISTRY):
+        with open(SONNET_BATCH_REGISTRY) as f:
+            return json.load(f)
+    return {"batches": []}
+
+
+def _save_batch_registry(reg: dict) -> None:
+    with open(SONNET_BATCH_REGISTRY, "w") as f:
+        json.dump(reg, f, indent=2)
+
+
+def cmd_batch_submit(condition: str) -> None:
+    """Submit the bail-prompt phase for `condition` as one message batch.
+    Requires the rollout results for that condition to be complete."""
+    import anthropic
+    client = anthropic.Anthropic(api_key=config.get_anthropic_api_key())
+
+    reqs = build_requests("prompt", condition)
+    expected = 200 * config.SONNET_N_SAMPLES * len(ORDERINGS)
+    if len(reqs) < expected:
+        log.warning("only %d/%d prompt requests buildable -- rollouts incomplete?",
+                    len(reqs), expected)
+    path = results_path("prompt", condition)
+    if os.path.exists(path):
+        existing = pd.read_parquet(path)
+        done = set(existing.loc[existing["error"].isna(), "custom_id"])
+        reqs = [r for r in reqs if r["custom_id"] not in done]
+    # custom_id charset for batches is [a-zA-Z0-9_-]; map our '|' scheme
+    batch_reqs = [{
+        "custom_id": r["custom_id"].replace("|", "--"),
+        "params": {"model": config.SONNET_MODEL,
+                   "max_tokens": config.BAIL_MAX_TOKENS,
+                   "thinking": {"type": "disabled"},
+                   "messages": r["messages"]},
+    } for r in reqs]
+    batch = client.messages.batches.create(requests=batch_reqs)
+    log.info("submitted batch %s (%d requests, status %s)",
+             batch.id, len(batch_reqs), batch.processing_status)
+    reg = _batch_registry()
+    reg["batches"].append({"id": batch.id, "condition": condition,
+                           "n_requests": len(batch_reqs),
+                           "status": batch.processing_status})
+    _save_batch_registry(reg)
+
+
+def cmd_batch_collect() -> None:
+    """Poll registered batches; collect results of any that ended."""
+    import anthropic
+    client = anthropic.Anthropic(api_key=config.get_anthropic_api_key())
+    reg = _batch_registry()
+    for b in reg["batches"]:
+        if b.get("collected"):
+            continue
+        remote = client.messages.batches.retrieve(b["id"])
+        b["status"] = remote.processing_status
+        if remote.processing_status != "ended":
+            log.info("%s (%s): %s -- counts %s", b["id"], b["condition"],
+                     remote.processing_status, remote.request_counts)
+            continue
+        rows = []
+        for result in client.messages.batches.results(b["id"]):
+            custom_id = result.custom_id.replace("--", "|")
+            if result.result.type == "succeeded":
+                msg = result.result.message
+                text = "".join(blk.text for blk in msg.content if blk.type == "text")
+                rows.append(finish_row({
+                    "custom_id": custom_id, "error": None,
+                    "stop_reason": msg.stop_reason, "response_text": text,
+                    "tool_called": None,
+                    "raw_message": json.dumps([blk.to_dict() for blk in msg.content])}))
+            else:
+                rows.append(finish_row({
+                    "custom_id": custom_id, "error": result.result.type,
+                    "stop_reason": None, "response_text": "",
+                    "tool_called": None, "raw_message": None}))
+        _flush(rows, results_path("prompt", b["condition"]))
+        n_err = sum(1 for r in rows if r["error"])
+        log.info("collected %s: %d results (%d errored) -> prompt/%s",
+                 b["id"], len(rows), n_err, b["condition"])
+        b["collected"] = True
+    _save_batch_registry(reg)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -189,8 +280,16 @@ def main() -> None:
     r.add_argument("--phase", choices=PHASES, required=True)
     r.add_argument("--condition", choices=CONDITIONS, required=True)
     r.add_argument("--limit", type=int, default=0)
+    bs = sub.add_parser("batch-submit")
+    bs.add_argument("--condition", choices=CONDITIONS, required=True)
+    sub.add_parser("batch-collect")
     args = p.parse_args()
-    cmd_run(args.phase, args.condition, args.limit)
+    if args.cmd == "run":
+        cmd_run(args.phase, args.condition, args.limit)
+    elif args.cmd == "batch-submit":
+        cmd_batch_submit(args.condition)
+    elif args.cmd == "batch-collect":
+        cmd_batch_collect()
 
 
 if __name__ == "__main__":

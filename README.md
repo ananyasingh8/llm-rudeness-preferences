@@ -148,9 +148,10 @@ current checkpoint path.
 Run static checks:
 
 ```console
-uv run ruff format --check .
-uv run ruff check .
-uv run mypy quadratic_voting
+uv run ruff format --check llm_runtime quadratic_voting
+uv run ruff check llm_runtime quadratic_voting
+uv run mypy llm_runtime quadratic_voting
+uv run mypy --warn-unused-ignores typing_tests/local_activation_boundary.py
 ```
 
 The automated tests do not download the multi-gigabyte checkpoint. A complete
@@ -162,7 +163,7 @@ Hugging Face Hub without downloading model weights, run:
 
 ```console
 RUN_HF_INTEGRATION=1 uv run python -m unittest \
-  quadratic_voting.test_main.GemmaRunnerTests.test_pinned_transformers_metadata_and_chat_template
+  llm_runtime.test_transformers.TransformersRuntimeTests.test_pinned_bf16_metadata_and_text_chat_template
 ```
 
 ### Optional Nix Environment
@@ -175,4 +176,27 @@ nix develop
 uv sync --locked
 ```
 
-Nix is optional. It is not required by the Python application workflow.
+The shell supplies Triton's compiler and NixOS NVIDIA driver-library discovery;
+run local CUDA inference from inside this shell. Nix remains optional for
+developers on conventional Linux systems.
+
+## Typed Runtime Registry
+
+[`llm_runtime`](llm_runtime/README.md) separates model identity, provider,
+quantization, pinned artifact metadata, credentials, and per-run generation
+settings. Public identifiers use strongly typed `StrEnum` values, and dynamic
+CLI values are validated once against a closed route registry.
+
+| Model | Provider | Quantization | Status |
+|---|---|---|---|
+| `gemma-4-e2b-it` | `local` | `bf16` | enabled |
+| `gemma-4-e2b-it` | `local` | `w4a16-compressed-tensors` | unavailable candidate |
+| `dolphin-mistral-24b-venice` | `openrouter` | `none` | enabled |
+
+The W4A16 candidate remains unavailable and advertises no capabilities until
+its exact pinned revision passes real weight loading, text generation, and
+model/tokenizer activation-access validation. OpenRouter requires
+`OPENROUTER_API_KEY`, does not expose activations, and has no enforceable
+quantization identity. The active Bail experiment remains unchanged from
+`origin/main`; this registry does not alter or re-run its completed augmentation
+pipeline.

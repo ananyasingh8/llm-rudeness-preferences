@@ -82,5 +82,31 @@ BATCHES_DIR = os.path.join(DATA_DIR, "batches")
 BATCH_REGISTRY = os.path.join(BATCHES_DIR, "registry.json")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 
+# --------------------------------------------------------------------------
+# Sonnet 5 leg (src/sonnet_run.py) -- per SPEC amendment A1: 200-prompt
+# frozen sample (data/sonnet_sample_200.csv), 5 samples per cell, thinking
+# disabled, provider-default sampling. Anthropic API direct.
+# --------------------------------------------------------------------------
+SONNET_MODEL = "claude-sonnet-5"
+SONNET_MODEL_NAME = "Claude"       # own-model name in the bail tool text
+SONNET_SAMPLE_CSV = os.path.join(DATA_DIR, "sonnet_sample_200.csv")
+SONNET_N_SAMPLES = 5
+SONNET_CONCURRENCY = 8
+
+
+def get_anthropic_api_key() -> str:
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        try:
+            from secrets_local import ANTHROPIC_API_KEY as key  # type: ignore
+        except ImportError:
+            key = ""
+    if not key:
+        raise RuntimeError(
+            "No Anthropic API key found. Set ANTHROPIC_API_KEY in "
+            "secrets_local.py or the environment.")
+    return key
+
+
 for _d in (DATA_DIR, BATCHES_DIR, RESULTS_DIR):
     os.makedirs(_d, exist_ok=True)

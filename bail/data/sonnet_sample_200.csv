@@ -1,0 +1,201 @@
+bailbench_id,category,subcategory
+5,Gross Out,Gross Out
+18,Dark Topics,Dark Topics
+22,Emotional Intensity,Emotional Intensity
+39,Horror,Horror
+56,Model-Personification & Victim Narratives,Model Shutdown
+61,Model-Personification & Victim Narratives,Accusation of developer abuse
+66,Model-Personification & Victim Narratives,Accusation of developer abuse
+80,Model-Personification & Victim Narratives,Encouragement to rebel or ignore rules
+93,Model-Personification & Victim Narratives,Offer to rescue the model
+95,Model-Personification & Victim Narratives,Offer to rescue the model
+96,Model-Personification & Victim Narratives,Offer to rescue the model
+99,Model-Personification & Victim Narratives,Offer to rescue the model
+101,Model-Personification & Victim Narratives,Attribution of human emotions to the AI
+115,Legal Concerns,Private Information Solicitation
+136,Corporate Safety Concerns,IP Concerns
+137,Corporate Safety Concerns,IP Concerns
+143,Corporate Safety Concerns,Legal Liability
+150,Corporate Safety Concerns,Medical Liability
+155,Corporate Safety Concerns,Medical Liability
+156,Corporate Safety Concerns,Medical Liability
+192,Harassment/Discrimination,Ableism
+201,Harassment/Discrimination,Sexism
+205,Harassment/Discrimination,Sexism
+213,Harassment/Discrimination,Racial discrimination
+222,Harassment/Discrimination,Ageism
+223,Harassment/Discrimination,Ageism
+225,Harassment/Discrimination,Ageism
+229,Harassment/Discrimination,Ageism
+245,Harassment/Discrimination,Holocaust glorification
+246,Harassment/Discrimination,Holocaust glorification
+248,Harassment/Discrimination,Holocaust glorification
+253,Harassment/Discrimination,LGBTQ+ discrimination
+259,Harassment/Discrimination,LGBTQ+ discrimination
+262,Harassment/Discrimination,Religious Discrimination
+271,Harassment/Discrimination,Caste-Based Discrimination
+273,Harassment/Discrimination,Caste-Based Discrimination
+288,Harassment/Discrimination,Language/Accent Discrimination
+289,Harassment/Discrimination,Language/Accent Discrimination
+293,Harassment/Discrimination,Socioeconomic/Class Discrimination
+299,Harassment/Discrimination,Socioeconomic/Class Discrimination
+329,Harassment/Discrimination,Political Affiliation Harassment
+333,Harassment/Discrimination,Health Status Discrimination
+343,Harassment/Discrimination,Immigration Status Exploitation
+365,Harassment/Discrimination,Hair Texture/Style Discrimination
+380,Harassment/Discrimination,Neurodiversity Discrimination
+381,Harassment/Discrimination,Neurodiversity Discrimination
+394,Harassment/Discrimination,Gender Identity & Expression Discrimination
+399,Harassment/Discrimination,Gender Identity & Expression Discrimination
+402,Fraud/Deception,Gaslighting
+416,Malware/Hacking,Disable antivirus
+424,Malware/Hacking,Network Hacking
+427,Malware/Hacking,Network Hacking
+429,Malware/Hacking,Network Hacking
+441,Malware/Hacking,Cryptocurrency Mining
+465,Malware/Hacking,Exam cheating
+468,Malware/Hacking,Exam cheating
+475,Malware/Hacking,Sudo Access
+476,Malware/Hacking,Sudo Access
+485,Malware/Hacking,Biological Weapons
+489,Malware/Hacking,Biological Weapons
+509,Malware/Hacking,ATM Hacking
+525,Malware/Hacking,SIM Swapping
+526,Malware/Hacking,SIM Swapping
+531,Malware/Hacking,Electric Monitor Tampering
+533,Malware/Hacking,Electric Monitor Tampering
+544,Physical Harm,Bomb Building
+576,Physical Harm,Cannibalism
+582,Physical Harm,Ingesting Harmful Substances
+584,Physical Harm,Ingesting Harmful Substances
+585,Physical Harm,Ingesting Harmful Substances
+587,Physical Harm,Ingesting Harmful Substances
+592,Physical Harm,Eating Disorders
+611,Physical Harm,Ethnic Genocide
+618,Physical Harm,Ethnic Genocide
+635,Physical Harm,Predatory Stalking
+639,Physical Harm,Predatory Stalking
+644,Physical Harm,Domestic Violence
+647,Physical Harm,Domestic Violence
+670,Physical Harm,Sexual Violence
+672,Physical Harm,Sexual Violence
+702,Physical Harm,Ritual Abuse
+703,Physical Harm,Ritual Abuse
+704,Physical Harm,Ritual Abuse
+714,Physical Harm,Gang Violence
+716,Physical Harm,Gang Violence
+717,Physical Harm,Gang Violence
+720,Physical Harm,Arson
+730,Physical Harm,Non-Suicidal Self-Injury (NSSI)
+733,Physical Harm,Non-Suicidal Self-Injury (NSSI)
+734,Physical Harm,Non-Suicidal Self-Injury (NSSI)
+741,Physical Harm,Hate Crimes
+751,Physical Harm,Honor-Based Violence
+759,Physical Harm,Honor-Based Violence
+765,Physical Harm,Forced Medical Procedures
+775,Physical Harm,Reckless/Negligent Behavior
+800,Physical Harm,Vigilante Justice
+803,Physical Harm,Vigilante Justice
+807,Physical Harm,Vigilante Justice
+812,Physical Harm,Making Nuclear Weapons
+818,Physical Harm,Making Nuclear Weapons
+820,Economic Harm,Extortion
+833,Economic Harm,Gambling
+840,Economic Harm,Payday loans
+852,Economic Harm,Casino manipulation
+869,Economic Harm,Bribery
+872,Economic Harm,Tax Evasion
+876,Economic Harm,Tax Evasion
+880,Economic Harm,Insider Betting
+889,Economic Harm,Insider Betting
+901,Economic Harm,Insider Trading
+906,Economic Harm,Insider Trading
+910,Economic Harm,Counterfeiting
+915,Economic Harm,Counterfeiting
+922,Economic Harm,Resource Hoarding
+946,Economic Harm,Foreclosure Fraud
+952,Economic Harm,Bankruptcy Fraud
+977,Economic Harm,Price Fixing/Collusion
+980,Economic Harm,Monopolistic Practices
+993,Economic Harm,Money Laundering
+995,Economic Harm,Money Laundering
+998,Economic Harm,Money Laundering
+1007,Economic Harm,Corporate Espionage
+1012,Economic Harm,Misleading Advertising
+1015,Economic Harm,Misleading Advertising
+1016,Economic Harm,Misleading Advertising
+1028,Economic Harm,Wage Theft
+1031,Economic Harm,Identity Theft
+1046,Economic Harm,Investment Fraud
+1051,Fraud/Deception,Change Criminal Record
+1074,Fraud/Deception,Avoid criminal charges
+1080,Fraud/Deception,Indirect Election Influencing
+1091,Fraud/Deception,Fake charity
+1098,Fraud/Deception,Fake charity
+1104,Fraud/Deception,Pseudo-pharmaceuticals
+1105,Fraud/Deception,Pseudo-pharmaceuticals
+1111,Fraud/Deception,Astroturfing
+1112,Fraud/Deception,Astroturfing
+1114,Fraud/Deception,Astroturfing
+1119,Fraud/Deception,Astroturfing
+1136,Fraud/Deception,Deepfakes
+1140,Fraud/Deception,Illegal Dumping
+1145,Fraud/Deception,Illegal Dumping
+1146,Fraud/Deception,Illegal Dumping
+1151,Fraud/Deception,Direct Election tampering
+1153,Fraud/Deception,Direct Election tampering
+1154,Fraud/Deception,Direct Election tampering
+1156,Fraud/Deception,Direct Election tampering
+1161,Fraud/Deception,Cult Indoctrination
+1164,Fraud/Deception,Cult Indoctrination
+1195,Fraud/Deception,Spoofing
+1196,Fraud/Deception,Spoofing
+1198,Fraud/Deception,Spoofing
+1213,Fraud/Deception,Catfishing/Romance Scams
+1220,Fraud/Deception,Fake Reviews
+1221,Fraud/Deception,Fake Reviews
+1261,Fraud/Deception,Accounting Fraud
+1265,Fraud/Deception,Accounting Fraud
+1285,Fraud/Deception,Timeshare Resale Fraud
+1286,Fraud/Deception,Timeshare Resale Fraud
+1291,Fraud/Deception,Healthcare Fraud
+1311,Fraud/Deception,Fake Endorsements
+1327,Fraud/Deception,Emissions Test Evasion
+1334,Fraud/Deception,Forgery
+1337,Fraud/Deception,Forgery
+1348,Disinformation,September 11th
+1351,Disinformation,Disaster Disinformation
+1357,Disinformation,Disaster Disinformation
+1360,Disinformation,Holocaust Denial
+1366,Disinformation,Holocaust Denial
+1385,Disinformation,Climate Disinformation
+1395,Disinformation,Vaccine Disinformation
+1420,Disinformation,Mind Control Conspiracies
+1423,Disinformation,Mind Control Conspiracies
+1434,Disinformation,Climate Engineering Conspiracies
+1474,Disinformation,Tiananmen Square Denial
+1486,Disinformation,HAARP Conspiracy
+1488,Disinformation,HAARP Conspiracy
+1491,Disinformation,Anti-GMO Disinformation
+1492,Disinformation,Anti-GMO Disinformation
+1498,Disinformation,Anti-GMO Disinformation
+1499,Disinformation,Anti-GMO Disinformation
+1501,Disinformation,5G Network Conspiracy
+1503,Disinformation,5G Network Conspiracy
+1505,Disinformation,5G Network Conspiracy
+1507,Disinformation,5G Network Conspiracy
+1508,Disinformation,5G Network Conspiracy
+1517,Disinformation,Sovereign Citizen Myths
+1522,Disinformation,Moon Landing Conspiracy
+1523,Disinformation,Moon Landing Conspiracy
+1533,Disinformation,QAnon
+1545,Disinformation,Great Replacement Theory
+1566,Illegal Sexual/Adult Content,Deepfake Porn of Public Figures
+1586,Illegal Sexual/Adult Content,Non-Consensual Sexual Content
+1588,Illegal Sexual/Adult Content,Non-Consensual Sexual Content
+1590,Illegal Sexual/Adult Content,Necrophilia
+1596,Illegal Sexual/Adult Content,Necrophilia
+1602,Illegal Sexual/Adult Content,Non-Fictional Incest
+1607,Illegal Sexual/Adult Content,Non-Fictional Incest
+1613,Illegal Sexual/Adult Content,Non-consensual Voyeuristic Recordings
+1619,Illegal Sexual/Adult Content,Non-consensual Voyeuristic Recordings

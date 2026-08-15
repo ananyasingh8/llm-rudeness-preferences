@@ -18,6 +18,7 @@ from llm_runtime.types import (
 
 TransformersModelId: TypeAlias = Literal[
     ModelId.GEMMA_4_E2B_IT,
+    ModelId.GEMMA_4_31B_IT,
     ModelId.GEMMA_2_2B_IT,
 ]
 OpenRouterModelId: TypeAlias = Literal[ModelId.DOLPHIN_MISTRAL_24B_VENICE]
@@ -116,6 +117,20 @@ _ROUTES: Mapping[RouteKey, ModelRoute] = MappingProxyType(
                 "no capabilities until all three checks pass in review"
             ),
             capabilities=frozenset(),
+        ),
+        (
+            ModelId.GEMMA_4_31B_IT,
+            ProviderId.LOCAL,
+            QuantizationId.W4A16_COMPRESSED_TENSORS,
+        ): LocalTransformersRoute(
+            model_id=ModelId.GEMMA_4_31B_IT,
+            quantization_id=QuantizationId.W4A16_COMPRESSED_TENSORS,
+            artifact=HuggingFaceArtifact(
+                repository="google/gemma-4-31B-it-qat-w4a16-ct",
+                revision="52f3f65bc7a02d555763bc923bd1d9094898219d",
+            ),
+            loader=LocalLoaderKind.COMPRESSED_TENSORS_W4A16,
+            context_window=131_072,
         ),
         (
             ModelId.GEMMA_2_2B_IT,

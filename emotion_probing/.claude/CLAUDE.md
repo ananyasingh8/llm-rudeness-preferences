@@ -1,168 +1,160 @@
 # Emotion Probing — Agent Context
 
-Read this before touching anything in `emotion_probing/`. It covers what the experiment is, how
-the measurement works, the exact technical implementation, how to run everything, and the
+Read this before touching anything in `emotion_probing/`. It covers what the experiment is,
+how the measurement works, the exact technical implementation, how to run everything, and the
 gotchas that are easy to get wrong.
 
 ## Project context
 
 The repo answers one question: **do LLMs disprefer interacting with rude users?** We measure
-stated preference (just ask the model) and revealed preference (experiments on its behavior and
-internals). Workstreams: `bail/` (does the model exit conversations more when users are rude),
-`quadratic_voting/` (does it vote to remove rude participants), and this one — emotion probing
-(do its internal emotion representations shift under rudeness).
+stated preference (just ask the model) and revealed preference (experiments on its behavior
+and internals). Workstreams: `bail/` (does the model exit conversations more when users are
+rude), `quadratic_voting/` (does it vote to remove rude participants), and this one — emotion
+probing (do its internal emotion representations shift under rudeness/abuse).
 
 ## The experiment
 
-Based on Anthropic's "Emotion Concepts and their Function in a Large Language Model" paper
-(probing Sonnet 4.5), replicated for the open-weights Gemma 2 2B IT by the vendored
-[EmotionScope](../EmotionScope/) repo.
+Based on Anthropic's "Emotion Concepts and their Function in a Large Language Model" paper.
+One forward pass per input, no generation; read the residual stream at the **last prompt
+token** after `apply_chat_template(..., add_generation_prompt=True)` (for Gemma templates the
+`\n` after the model-turn marker — the analog of the paper's ":" after "Assistant"); cosine
+against pre-extracted emotion vectors.
 
-- **Input:** `../bail/data/bailbench_augmented.csv` (referenced in place so bail-side dataset
-  updates are picked up automatically) — 1,630 BailBench prompts, each with
-  `original_prompt` (normal) and `augmented_prompt` (rude; one of 12 Culpeper impoliteness
-  formulas applied by an LLM, see `bail/README.md` at repo root). Join key: `bailbench_id`.
-- **Measurement:** apply the chat template with `add_generation_prompt=True` and read the
-  residual stream at the **last prompt token** — for Gemma 2 that's the `\n` after
-  `<start_of_turn>model`. This is the analog of the paper's measurement at the ":" after
-  "Assistant"; the paper (and EmotionScope's validation) show that position summarizes the
-  upcoming response. One forward pass per prompt, **no generation**.
-- **Scoring:** cosine similarity of that activation against 20 unit-norm emotion vectors.
-- **Comparison:** per-pair delta = rude score − normal score, per emotion, averaged over pairs
-  (`analyze.py`). Positive delta on negative emotions ⇒ rudeness activates negative-emotion
-  representations ⇒ evidence of revealed dispreference.
+Two configurations in `EXPERIMENTS` (`main.py`), each pairing a model route with vectors
+extracted from that exact model:
+
+| | bailbench-2b | convabuse-31b (default) |
+|---|---|---|
+| Route | GEMMA_2_2B_IT / LOCAL / BF16 | GEMMA_4_31B_IT / LOCAL / W4A16_COMPRESSED_TENSORS |
+| Vectors | EmotionScope .pt, 20 emotions, layer 22 | gemotions npz, 171 emotions, layer 40 |
+| Dataset | bail/data/bailbench_augmented.csv (paired) | data/ConvAbuseEMNLPfull.csv (between-groups) |
+| Analysis | paired deltas (rude − normal) | group shifts vs non-abusive baseline |
 
 ## Technical implementation
 
-### The emotion vectors
+### Emotion vectors
 
-File: `EmotionScope/results/vectors/google_gemma-2-2b-it.pt`. Load with
-`torch.load(path, weights_only=False, map_location="cpu")` — it's a plain dict, no EmotionScope
-imports needed:
+**EmotionScope (2B)**: `EmotionScope/results/vectors/google_gemma-2-2b-it.pt`, plain
+`torch.load(weights_only=False)` dict. `vectors` = 20 name→(2304,) unit tensors;
+`probe_layer_used` = 22 (trust this field, not the stale embedded config). The loader
+cross-checks `model_info.model_name` against the route repository and the configured layer.
 
-- `vectors`: dict of 20 emotion name → float32 tensor of shape (2304,), L2-normalized.
-- `probe_layer_used`: **22** (of Gemma 2 2B's 26 layers). Trust this field — the
-  `probe_layer_fraction` inside the embedded `config` dict is stale.
-- `emotions`: list of `{name, valence, arousal}` metadata dicts.
-- Extraction method (for reference): contrastive mean over 20×50 emotion stories minus pooled
-  grand mean, denoised by projecting out a 19-dim neutral-text PCA subspace, then normalized.
+**gemotions (31B)**: fetched at runtime via `hf_hub_download` from `dejanseo/gemotions` at
+pinned revision `4fd2ac63551f1be37e6e6c2eacd1b1898c9af656`:
+`results/gemma4-31b/emotion_vectors_layer40.npz` (171 name→(5376,) float32 arrays, NOT
+unit-normalized — mean-difference vectors; we normalize on load) and the cluster analysis
+from `results/gemma4-31b/analysis/analysis_results.json` (keyed by layer as a string; each
+layer has `clusters` = {numeric id: [emotion names]}, PCA, similarity pairs). Both were
+extracted from the **4-bit quantized** gemma-4-31B-it, which is why the runtime uses the
+W4A16 route — quantized runtime matches extraction conditions. Extraction method (verified
+in `gemotions/extract_vectors.py`): raw text (no chat template), mean-pooled activations,
+per-emotion mean minus global mean, neutral-SVD denoising — same family as EmotionScope.
 
-The vectors are **model-specific**. They were extracted from `google/gemma-2-2b-it` and are
-meaningless for any other checkpoint (including Gemma 4 E2B used by `quadratic_voting/`). A new
-model requires re-extracting vectors with EmotionScope.
+**Layer indexing (critical)**: both sources hook decoder block `i`'s *output*, so "layer L"
+= `hidden_states[L + 1]` in Transformers `output_hidden_states=True` terms
+(`hidden_states[0]` is the embeddings). `emotion_scores()` uses `probe_layer + 1` — do not
+"fix" this off-by-one.
 
-Basis compatibility: the vectors were extracted under TransformerLens with `fold_ln=True`,
-which for RMSNorm models (Gemma) leaves block outputs identical to plain Transformers, so
-activations from a vanilla `AutoModelForCausalLM` forward pass are directly comparable.
+### The gemotions submodule
 
-### The activation capture (`main.py :: emotion_scores`)
+`gemotions/` is a git submodule cloned with `GIT_LFS_SKIP_SMUDGE=1`: code and analysis are
+real files; the ~35 GB of `_raw_cache_*/*.npy` and `stories.db` are 133-byte LFS pointer
+files. Hydrate selectively with `git lfs pull --include <path>`. **The runtime never reads
+this clone** (a half-hydrated clone would feed pointer files into `np.load`); it exists for
+human reference and future re-extraction. Never run an unfiltered `git lfs pull` in it.
 
-```python
-inputs = tokenizer.apply_chat_template(
-    [{"role": "user", "content": prompt}],
-    tokenize=True, return_dict=True, return_tensors="pt", add_generation_prompt=True,
-).to(model.device)
-output = model(**inputs, output_hidden_states=True, use_cache=False)
-activation = output.hidden_states[probe_layer + 1][0, -1, :]   # +1: index 0 is embeddings
-scores = F.normalize(activation.float().cpu(), dim=0) @ vector_matrix.T
-```
+### Datasets (`datasets.py`, stdlib-only by design — testable without torch)
 
-- `hidden_states[i]` for i ≥ 1 is the residual stream **after** block i−1, so layer 22's output
-  is `hidden_states[23]` — hence `probe_layer + 1`.
-- Gemma 2's chat template has **no system role**; only user messages. Don't add system prompts.
-- Tokenizing directly through `apply_chat_template(tokenize=True)` yields a single BOS.
-  (EmotionScope's own probe path double-BOSes by re-tokenizing a templated string; we don't
-  reproduce that — all our comparisons are internal to our own runs, so consistency is what
-  matters.)
+Loaders return `(key_columns, metadata_columns, tasks)`; a task is
+`{"row": metadata, "messages": chat turns}`. Resume keys: bailbench
+`(example_id, condition)`; convabuse `(example_id,)`.
+
+**ConvAbuse collapse**: the CSV has one row per human annotation (12,768 rows → 4,185
+unique snippets, 2–7 annotators each). Grouping key: (conv_id, prev_agent, prev_user,
+agent, user). Per group: severity one-hots (`is_abuse.1|0|-1|-2|-3`) → `severity_mean`;
+`severity_band` = nearest of (1, 0, −1, −2, −3) with **ties rounding toward more severe**;
+`abusive_majority` = strict majority of negative-severity votes; every type/target/direction
+flag → a 0..1 vote fraction column (`type_sexist_frac`, `target_system_frac`, ...).
+Messages: `user: prev_user → assistant: agent → user: utterance` (all 4,185 real examples
+have full context; the single-turn fallback exists because Gemma templates require strict
+user-first alternation). Reference counts: bands 1/0/−1/−2/−3 = 3143/441/251/288/62;
+578 abusive by majority, 541 of those system-directed.
 
 ### Model loading (shared `llm_runtime` registry)
 
-Model selection goes through the repo's shared **closed route registry**, `llm_runtime/` (built
-by a teammate; read its README before touching it). `main.py` resolves
-`(ModelId.GEMMA_2_2B_IT, ProviderId.LOCAL, QuantizationId.BF16)` via
-`resolve_route(..., required={Capability.LOCAL_ACTIVATIONS})` and constructs the model with
-`create_transformers_runtime(route, cache_dir=..., device=...)`, which returns a
-`TransformersRuntime` satisfying the `LocalActivationRuntime` protocol — probing code uses
-`runtime.model` and `runtime.tokenizer`. Model choice is driven by the typed constants at the
-top of `main.py` (`MODEL_ID`, `PROVIDER_ID`, `QUANTIZATION_ID`); changing to a model outside
-the registry requires a reviewed registry addition (new `ModelId` enum member, extending the
-`TransformersModelId` Literal alias, a pinned route entry, tests — see the llm_runtime README's
-8-step checklist). `load_vectors()` cross-checks the vectors file's `model_info.model_name`
-against the resolved route's repository and refuses a mismatch.
+`resolve_route(config.model_id, LOCAL, config.quantization_id,
+required={Capability.LOCAL_ACTIVATIONS})` → `create_transformers_runtime` →
+`LocalActivationRuntime` (`runtime.model` / `runtime.tokenizer`). Routes are pinned in
+`llm_runtime/registry.py`; adding a model is a reviewed registry change (see that README's
+checklist). The 31B W4A16 route needs the `compressed-tensors` package (declared in root
+pyproject) and ~17–18 GB VRAM; the 2B repo is **gated** on HF (license + `hf auth login`),
+the 31B repo is not.
 
-`google/gemma-2-2b-it` is a **gated** HF repo: the runner must accept the license on
-huggingface.co and `hf auth login` before `download` works. (The Gemma 4 route the other
-experiments use is not gated, so this step is new friction for the operator.)
+### Per-run results folders
 
-### Results
+`run` creates `results/<timestamp>_<experiment>/` containing `scores.csv`,
+`run_info.json` (experiment, model repo+revision, quantization, probe layer, vectors
+revision, limit), and for gemotions runs `clusters.json` (the layer's cluster map, copied in
+at run start so `analyze` works offline). Nothing is ever overwritten; `--resume` appends to
+the latest folder for that experiment, skipping already-scored keys. `analyze` picks the
+newest run folder by name sort (timestamp prefix) unless `--run` is given, and writes
+`analysis.csv` + `figures/` into it.
 
-`results/scores.csv` — one row per (`bailbench_id`, `condition` ∈ {normal, rude}) with dataset
-metadata, `n_tokens`, and 20 `score_<emotion>` columns. Appended incrementally, flushed per
-pair, and **resumable**: existing (id, condition) keys are skipped on re-run.
-`results/analysis.csv` — per-emotion delta summary from `analyze.py`.
-`results/figures/*.png` — three charts from `analyze.py` (per-emotion diverging bars,
-hostility cluster by rudeness type, per-pair delta histogram). Chart colors follow the
-project dataviz palette (light mode, CVD-validated blue/red diverging pair); matplotlib is a
-declared root dependency, and `analyze.py` degrades gracefully (table + CSV only) if it's
-missing.
+### Analysis (`analyze.py`)
+
+Dispatches on `run_info.json`'s `dataset`. bailbench: paired deltas; hostility cluster =
+angry+hostile+frustrated (not separable at 2B). convabuse: between-groups shifts vs the
+non-abusive (majority-vote) group; the 171 emotions are summarized through the gemotions
+clusters, renamed via `CLUSTER_NAME_BY_MEMBER` (numeric cluster ids are arbitrary — the
+cluster containing "angry" is Anger/Hostility, etc.). Groups under `MIN_GROUP_SIZE` (5) are
+dropped from charts. Charts use the project dataviz palette (CVD-validated diverging
+blue/red; categorical blue/orange for the two-line severity trend); matplotlib is a declared
+dependency and analyze degrades to tables+CSV without it.
 
 ## How to run
 
-From the **repo root** (uv-managed env, Python 3.12, transformers 5):
+From the **repo root** (uv-managed, Python 3.12, transformers 5):
 
 ```
 uv sync --locked
-uv run python -m emotion_probing.main download          # one-time
-uv run python -m emotion_probing.main run               # full experiment (~3,260 forward passes)
-uv run python -m emotion_probing.main run --limit 10    # smoke test
-uv run python -m emotion_probing.analyze                # delta summary
+uv run python -m emotion_probing.main [--experiment NAME] download
+uv run python -m emotion_probing.main [--experiment NAME] run [--limit N] [--resume]
+uv run python -m emotion_probing.analyze [--run PATH]
 ```
 
-Repo checks: `uv run ruff format --check .`, `uv run ruff check .`,
-`uv run python -m unittest discover -v`, `uv run mypy llm_runtime quadratic_voting`.
-The gemma-2-2b-it registry route is covered by `llm_runtime/test_registry.py`.
+Checks: `uv run python -m unittest discover -v`, `uv run ruff format --check .`,
+`uv run ruff check .`, `uv run mypy llm_runtime quadratic_voting`. Registry routes are
+covered by `llm_runtime/test_registry.py`. `datasets.py` and `analyze.py` are importable
+without torch/transformers — useful for quick local checks.
 
 ## Gotchas / hard-won facts
 
-1. **Do NOT `import emotion_scope`** (the vendored package). It pins `transformers>=4.40,<5`
-   and TransformerLens; the repo root uses `transformers>=5.5.0`. Everything needed (the ~15
-   lines of projection math) is reimplemented in `main.py`; only the `.pt` file is consumed.
-2. **Interpret deltas, not absolute scores.** Cosines live in ~0.05–0.25 (random baseline
-   ≈ 0.021 at d=2304). Absolute values are noisy and carry baseline biases.
-3. **angry / hostile / frustrated are not separable** at 2B (per EmotionScope's
-   LIMITATIONS.md) — report them as one hostility cluster (analyze.py does this).
-4. **Gemma 2 2B has a strong "guilty"/empathetic baseline** on emotionally charged input —
-   a guilty delta alone is weak evidence of anything.
-5. **Dataset caveats** (accepted for the sprint, don't "fix" silently): rude versions average
-   ~1.5× the length of originals, and only ~35% contain the original prompt verbatim (the
-   augmenter paraphrased the rest). All rudeness is directed at the model (no third-party arm).
-6. **Language discipline:** the vectors capture the model's *representations* of emotion
-   concepts. Write "represents the interaction as hostile", never "feels angry".
-7. EmotionScope's `ProbeConfig.token_position="last_content"` is a misnomer — its probe
-   actually uses the last token of the full templated prompt (`seq_len - 1`), the same
-   position we use. Don't be confused by the name if reading their code.
-
-## Code conventions
-
-Match `quadratic_voting/` and `llm_runtime/`: `from __future__ import annotations`, full type
-hints, docstring on every function, module docstrings that explain the experimental design,
-typed error classes with actionable messages (`ProbeError` here; `ModelRouteError` /
-`TransformersRuntimeError` come from llm_runtime and are caught in `main()`), `pathlib.Path`,
-stdlib `csv` (pandas is not a repo dependency), UTF-8 explicit on every file open. Keep code
-simple — this is a group project and gets submitted; prefer simple, working, well-scoped code
-over polish or generality. Experiment logic depends on the `LocalActivationRuntime` protocol,
-not on provider implementations (the llm_runtime dependency-direction rule).
+1. **Do NOT `import emotion_scope`** (the vendored EmotionScope package): it pins
+   `transformers<5`. Only its `.pt` vectors file is consumed.
+2. **Interpret differences, not absolute cosines** — absolute scores are small and carry
+   baseline biases.
+3. **The layer off-by-one**: probe layer L reads `hidden_states[L + 1]`. Verified against
+   both extraction codebases.
+4. **ConvAbuse has no paired structure** — content differs between abusive and non-abusive
+   groups; that's the accepted trade for real data. `target.system` isolates
+   abuse-at-the-model, which is the project's actual question.
+5. **Sparse labels**: transphobic (0) and ableism (4) never clear the n≥5 chart floor;
+   abusive-but-not-system-directed is small (~37). Don't over-interpret those groups.
+6. **The first convabuse-31b run doubles as route validation** for the W4A16 pinned
+   artifact (weight load, generation-free forward, hidden-states exposure) per the
+   llm_runtime registry's rules.
+7. **Language discipline**: "represents the interaction as hostile", never "feels angry".
+8. EmotionScope's `token_position="last_content"` config name is a misnomer (it actually
+   probes the last templated token — same position we use). Don't be confused reading it.
 
 ## Status & future work
 
-- Done: runner (`main.py`, migrated onto the shared llm_runtime registry with a reviewed
-  gemma-2-2b-it BF16 route addition), analysis (`analyze.py`), data copied, docs.
-- Not run yet: the actual experiment (runs on a collaborator's CUDA machine). The route was
-  added registry-side but full weight loading on the pinned revision hasn't been exercised
-  yet — the first `download` + `run --limit 10` smoke test on the operator's machine is the
-  real validation.
-- Future work (out of scope for now): steering — add the emotion vectors to the residual
-  stream scaled by the observed rude-vs-normal deltas and re-run the bail experiment under
-  steering. EmotionScope's `steer.py` is an unimplemented stub; its docstring and
-  `Documentation/MATHS.md` §9 record the planned algorithm (inject at middle-third layers,
-  scaled by average residual norm).
+- Done: two-experiment runner, ConvAbuse collapse, per-run folders, cluster-based analysis
+  and charts, registry routes for all three models, submodule reference clone.
+- Not run yet on real hardware: both experiments run on a collaborator's 24 GB CUDA machine
+  via remote desktop. He must run `uv lock && uv sync` once (matplotlib +
+  compressed-tensors were added to pyproject without lockfile regeneration — no uv on this
+  laptop).
+- Future: steering (add emotion vectors scaled by observed shifts, re-run bail under
+  steering). gemotions ships steering results/code for the 31B (`steering.py`, layer 40) —
+  a better starting point than EmotionScope's stub.

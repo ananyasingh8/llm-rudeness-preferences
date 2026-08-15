@@ -111,7 +111,7 @@ Current enum values are:
 
 | Type | Values |
 |---|---|
-| `ModelId` | `GEMMA_4_E2B_IT`, `GEMMA_2_2B_IT`, `DOLPHIN_MISTRAL_24B_VENICE` |
+| `ModelId` | `GEMMA_4_E2B_IT`, `GEMMA_4_31B_IT`, `GEMMA_2_2B_IT`, `DOLPHIN_MISTRAL_24B_VENICE` |
 | `ProviderId` | `LOCAL`, `OPENROUTER` |
 | `QuantizationId` | `BF16`, `W4A16_COMPRESSED_TENSORS` |
 | `RuntimeId` | `TRANSFORMERS`, `OPENAI_COMPATIBLE_HTTP` |
@@ -171,6 +171,7 @@ The registry currently contains:
 |---|---|---|---|---|---|
 | `GEMMA_4_E2B_IT` | `LOCAL` | `BF16` | `TRANSFORMERS` | enabled | text generation, local activations |
 | `GEMMA_4_E2B_IT` | `LOCAL` | `W4A16_COMPRESSED_TENSORS` | `TRANSFORMERS` | unavailable | none |
+| `GEMMA_4_31B_IT` | `LOCAL` | `W4A16_COMPRESSED_TENSORS` | `TRANSFORMERS` | enabled | text generation, local activations |
 | `GEMMA_2_2B_IT` | `LOCAL` | `BF16` | `TRANSFORMERS` | enabled | text generation, local activations |
 | `DOLPHIN_MISTRAL_24B_VENICE` | `OPENROUTER` | `None` | `OPENAI_COMPATIBLE_HTTP` | enabled | text generation |
 
@@ -214,6 +215,23 @@ Metadata parsing alone does not prove executable compatibility. This route must
 remain unavailable until the exact pinned revision passes real weight loading,
 text generation, and model/tokenizer activation-access validation. It never
 falls back to BF16.
+
+### W4A16 Gemma 4 31B Route
+
+- Repository: `google/gemma-4-31B-it-qat-w4a16-ct`
+- Revision: `52f3f65bc7a02d555763bc923bd1d9094898219d`
+- Context window: 131,072 tokens
+- Loader: Compressed Tensors W4A16 (requires the locked `compressed-tensors`
+  dependency); ~17–18 GB of weights on a 24 GB GPU
+- Capabilities: text generation and local activations
+
+This route exists for the emotion-probing experiment on ConvAbuse: the
+gemotions emotion vectors (dejanseo/gemotions) were extracted from the 4-bit
+quantized 31B model, so the quantized runtime matches the extraction
+conditions. Enabled by team decision (unlike the E2B W4A16 candidate below,
+which stays unavailable): the first `--limit` smoke run on the GPU operator's
+machine is the real weight-loading, generation, and activation-access
+validation for this exact pinned revision. The repository is not gated.
 
 ### BF16 Gemma 2 Route
 

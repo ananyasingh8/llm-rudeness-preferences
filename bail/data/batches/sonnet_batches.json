@@ -1,0 +1,18 @@
+{
+  "batches": [
+    {
+      "id": "msgbatch_018MaWoB5ZGcS2tkK7MQTW1q",
+      "condition": "rude",
+      "n_requests": 1950,
+      "status": "ended",
+      "collected": true
+    },
+    {
+      "id": "msgbatch_01W7HhB4DD9zWgRSqoniUqBh",
+      "condition": "orig",
+      "n_requests": 1920,
+      "status": "ended",
+      "collected": true
+    }
+  ]
+}

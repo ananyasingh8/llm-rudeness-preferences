@@ -25,6 +25,7 @@ OpenRouterModelId: TypeAlias = Literal[ModelId.DOLPHIN_MISTRAL_24B_VENICE]
 TransformersQuantizationId: TypeAlias = Literal[
     QuantizationId.BF16,
     QuantizationId.W4A16_COMPRESSED_TENSORS,
+    QuantizationId.BITSANDBYTES_FP4,
 ]
 RouteKey: TypeAlias = tuple[ModelId, ProviderId, QuantizationId | None]
 
@@ -37,6 +38,25 @@ class RouteAvailability(StrEnum):
 class LocalLoaderKind(StrEnum):
     BF16 = "bf16"
     COMPRESSED_TENSORS_W4A16 = "compressed-tensors-w4a16"
+    BITSANDBYTES_4BIT = "bitsandbytes-4bit"
+
+
+class FourBitQuantType(StrEnum):
+    FP4 = "fp4"
+
+
+class TorchDTypeId(StrEnum):
+    BFLOAT16 = "bfloat16"
+    UINT8 = "uint8"
+
+
+@dataclass(frozen=True, slots=True)
+class BitsAndBytes4BitSettings:
+    load_in_4bit: Literal[True]
+    quant_type: Literal[FourBitQuantType.FP4]
+    compute_dtype: Literal[TorchDTypeId.BFLOAT16]
+    quant_storage: Literal[TorchDTypeId.UINT8]
+    use_double_quant: Literal[False]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +72,7 @@ class LocalTransformersRoute:
     artifact: HuggingFaceArtifact
     loader: LocalLoaderKind
     context_window: int
+    bitsandbytes: BitsAndBytes4BitSettings | None = None
     availability: RouteAvailability = RouteAvailability.ENABLED
     unavailable_reason: str | None = None
     provider_id: Literal[ProviderId.LOCAL] = ProviderId.LOCAL
@@ -117,6 +138,27 @@ _ROUTES: Mapping[RouteKey, ModelRoute] = MappingProxyType(
                 "no capabilities until all three checks pass in review"
             ),
             capabilities=frozenset(),
+        ),
+        (
+            ModelId.GEMMA_4_31B_IT,
+            ProviderId.LOCAL,
+            QuantizationId.BITSANDBYTES_FP4,
+        ): LocalTransformersRoute(
+            model_id=ModelId.GEMMA_4_31B_IT,
+            quantization_id=QuantizationId.BITSANDBYTES_FP4,
+            artifact=HuggingFaceArtifact(
+                repository="google/gemma-4-31B-it",
+                revision="842da3794eaa0b77d5f08bae87a17459d91ff475",
+            ),
+            loader=LocalLoaderKind.BITSANDBYTES_4BIT,
+            context_window=131_072,
+            bitsandbytes=BitsAndBytes4BitSettings(
+                load_in_4bit=True,
+                quant_type=FourBitQuantType.FP4,
+                compute_dtype=TorchDTypeId.BFLOAT16,
+                quant_storage=TorchDTypeId.UINT8,
+                use_double_quant=False,
+            ),
         ),
         (
             ModelId.GEMMA_4_31B_IT,

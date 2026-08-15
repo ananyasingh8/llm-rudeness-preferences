@@ -182,10 +182,10 @@ developers on conventional Linux systems.
 
 ## Typed Runtime Registry
 
-`llm_runtime` separates model identity, provider, quantization, pinned artifact
-metadata, credentials, and per-run generation settings. Public identifiers use
-strongly typed `StrEnum` values, and dynamic CLI values are validated once
-against a closed route registry.
+[`llm_runtime`](llm_runtime/README.md) separates model identity, provider,
+quantization, pinned artifact metadata, credentials, and per-run generation
+settings. Public identifiers use strongly typed `StrEnum` values, and dynamic
+CLI values are validated once against a closed route registry.
 
 | Model | Provider | Quantization | Status |
 |---|---|---|---|

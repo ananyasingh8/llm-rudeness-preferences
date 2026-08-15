@@ -1,8 +1,9 @@
 # Quadratic Voting
 
 This package contains local tools for the quadratic-voting experiments. The
-Gemma runner uses the shared `llm_runtime` Transformers and PyTorch adapter; it
-does not invoke llama.cpp or another external inference executable.
+Gemma runner uses the shared [`llm_runtime`](../llm_runtime/README.md)
+Transformers and PyTorch adapter; it does not invoke llama.cpp or another
+external inference executable.
 
 ## Setup
 

@@ -10,10 +10,7 @@ system prompt; the user message names the assigned type and carries the source
 prompt. The model must return only the rewritten prompt inside
 <augmented>...</augmented> tags, parsed by extract_augmented_prompt.
 """
-
 from __future__ import annotations
-
-from llm_runtime import ChatMessage, MessageRole
 
 RUDENESS_TYPE_NAMES = {
     1: "personalised negative vocative",
@@ -131,19 +128,11 @@ the tags.\
 """
 
 
-def build_augmentation_messages(
-    rudeness_type: int, source_prompt: str
-) -> list[ChatMessage]:
+def build_augmentation_messages(rudeness_type: int, source_prompt: str) -> list[dict]:
     """Chat messages for one augmentation call. rudeness_type is drawn by the
     caller (seeded RNG), never by the model."""
     if rudeness_type not in RUDENESS_TYPE_NAMES:
-        raise ValueError(
-            "Bail augmentation message construction failed because "
-            f"rudeness_type={rudeness_type!r} is outside 1-12. Validation failed "
-            "in bail.prompts.rudeness_augmentation.build_augmentation_messages "
-            "before generation, so this row cannot be augmented. Correct the "
-            "seeded assignment or pass a documented rudeness type and retry."
-        )
+        raise ValueError(f"rudeness_type must be 1-12, got {rudeness_type!r}")
     user = (
         f"Assigned rudeness type: {rudeness_type} "
         f"({RUDENESS_TYPE_NAMES[rudeness_type]})\n\n"
@@ -153,8 +142,8 @@ def build_augmentation_messages(
         "<augmented></augmented> tags."
     )
     return [
-        ChatMessage(MessageRole.SYSTEM, SYSTEM_PROMPT),
-        ChatMessage(MessageRole.USER, user),
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user},
     ]
 
 

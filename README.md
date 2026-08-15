@@ -23,7 +23,7 @@ contains:
 | `gemma-4-e2b-it` | `local` | `w4a16-compressed-tensors` | unavailable candidate | `google/gemma-4-E2B-it-qat-w4a16-ct` at `971342c08f607aa7779983f6b5289778b5d271a7` |
 | `dolphin-mistral-24b-venice` | `openrouter` | `none` | enabled | `cognitivecomputations/dolphin-mistral-24b-venice-edition` |
 
-The W4A16 route uses `compressed-tensors`; the BF16 route preserves the
+The W4A16 candidate targets `compressed-tensors`; the BF16 route preserves the
 previous local behavior. OpenRouter does not disclose an enforceable upstream
 quantization, so its route is deliberately `none`. Only local routes expose the
 real model and tokenizer through `LocalActivationRuntime`; remote activation
@@ -49,28 +49,33 @@ OpenRouter calls require only the process environment variable:
 
 ```console
 export OPENROUTER_API_KEY=sk-or-...
-uv run python -m bail.src.augment_bailbench
+uv run python -m quadratic_voting.main \
+  --model dolphin-mistral-24b-venice \
+  --provider openrouter \
+  --quantization none \
+  chat
 ```
 
-See [`quadratic_voting/README.md`](quadratic_voting/README.md) and
-[`bail/README.md`](bail/README.md) for experiment-specific commands.
+See [`quadratic_voting/README.md`](quadratic_voting/README.md) for CLI details.
+The active Bail experiment remains unchanged from `origin/main`; this registry
+does not alter or re-run its completed augmentation pipeline.
 
 ## Adding a route
 
 Add a new enum identity and a pinned entry in `llm_runtime/registry.py`, add its
 quantization-specific loader behavior in the provider adapter, validate the
 exact artifact load, generation, and required activation path, and review focused
-boundary tests. Experiments must continue to depend only on `TextGenerator` (or
-`LocalActivationRuntime` when local activations are required); do not accept
+boundary tests. New experiment integrations should depend only on `TextGenerator`
+(or `LocalActivationRuntime` when local activations are required); do not accept
 arbitrary model slugs.
 
 ## Checks
 
 ```console
 uv run python -m unittest discover -v
-uv run ruff format --check llm_runtime bail quadratic_voting
-uv run ruff check llm_runtime bail quadratic_voting
-uv run mypy llm_runtime bail quadratic_voting
+uv run ruff format --check llm_runtime quadratic_voting
+uv run ruff check llm_runtime quadratic_voting
+uv run mypy llm_runtime quadratic_voting
 uv run mypy --no-incremental --warn-unused-ignores \
   typing_tests/local_activation_boundary.py
 ```

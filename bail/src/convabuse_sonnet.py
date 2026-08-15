@@ -101,6 +101,8 @@ def cmd_collect() -> None:
         remote = fetch_batch(b["id"])
         log.info("%s chunk %d: %s -- %s", b["id"], b["chunk"],
                  remote.get("status"), remote.get("request_counts"))
+        if remote.get("status") == "failed":
+            continue  # moderation-failed originals; replaced by retry batches
         if remote.get("status") != "completed":
             pending += 1
             continue

@@ -98,9 +98,30 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ModelRouteError, "not registered.*Supported routes.*Select"
         ):
+            resolve_route(ModelId.GEMMA_4_31B_IT, ProviderId.LOCAL, QuantizationId.BF16)
+
+    def test_gemma_4_31b_bitsandbytes_fp4_probe_route(self) -> None:
+        route = cast(
+            LocalTransformersRoute,
             resolve_route(
-                ModelId.GEMMA_4_31B_IT, ProviderId.LOCAL, QuantizationId.BF16
-            )
+                ModelId.GEMMA_4_31B_IT,
+                ProviderId.LOCAL,
+                QuantizationId.BITSANDBYTES_FP4,
+                required={Capability.LOCAL_ACTIVATIONS},
+            ),
+        )
+        self.assertEqual(route.artifact.repository, "google/gemma-4-31B-it")
+        self.assertEqual(
+            route.artifact.revision,
+            "842da3794eaa0b77d5f08bae87a17459d91ff475",
+        )
+        self.assertIsNotNone(route.bitsandbytes)
+        assert route.bitsandbytes is not None
+        self.assertTrue(route.bitsandbytes.load_in_4bit)
+        self.assertEqual(route.bitsandbytes.quant_type.value, "fp4")
+        self.assertEqual(route.bitsandbytes.compute_dtype.value, "bfloat16")
+        self.assertEqual(route.bitsandbytes.quant_storage.value, "uint8")
+        self.assertFalse(route.bitsandbytes.use_double_quant)
 
     def test_gemma_2_2b_probe_route_and_invalid_boundaries(self) -> None:
         route = cast(

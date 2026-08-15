@@ -20,15 +20,15 @@ token** after `apply_chat_template(..., add_generation_prompt=True)` (for Gemma 
 `\n` after the model-turn marker — the analog of the paper's ":" after "Assistant"); cosine
 against pre-extracted emotion vectors.
 
-Two configurations in `EXPERIMENTS` (`main.py`), each pairing a model route with vectors
+Three configurations in `EXPERIMENTS` (`main.py`), each pairing a model route with vectors
 extracted from that exact model:
 
-| | bailbench-2b | convabuse-31b (default) |
-|---|---|---|
-| Route | GEMMA_2_2B_IT / LOCAL / BF16 | GEMMA_4_31B_IT / LOCAL / W4A16_COMPRESSED_TENSORS |
-| Vectors | EmotionScope .pt, 20 emotions, layer 22 | gemotions npz, 171 emotions, layer 40 |
-| Dataset | bail/data/bailbench_augmented.csv (paired) | data/ConvAbuseEMNLPfull.csv (between-groups) |
-| Analysis | paired deltas (rude − normal) | group shifts vs non-abusive baseline |
+| | bailbench-2b | convabuse-31b (default) | convabuse-31b-local-quant |
+|---|---|---|---|
+| Route | GEMMA_2_2B_IT / LOCAL / BF16 | GEMMA_4_31B_IT / LOCAL / W4A16_COMPRESSED_TENSORS | GEMMA_4_31B_IT / LOCAL / BITSANDBYTES_FP4 |
+| Vectors | EmotionScope .pt, 20 emotions, layer 22 | gemotions npz, 171 emotions, layer 40 | same gemotions vectors |
+| Dataset | bail/data/bailbench_augmented.csv (paired) | data/ConvAbuseEMNLPfull.csv (between-groups) | same ConvAbuse data |
+| Analysis | paired deltas (rude − normal) | group shifts vs non-abusive baseline | same comparison under local quantization |
 
 ## Technical implementation
 
@@ -46,15 +46,18 @@ name→(5376,) float32 arrays, NOT unit-normalized — mean-difference vectors; 
 load) and the cluster analysis from `results/gemma4-31b/analysis/analysis_results.json`
 (keyed by layer as a string; each layer has `clusters` = {numeric id: [emotion names]},
 PCA, similarity pairs). Both were
-extracted from the **4-bit quantized** gemma-4-31B-it, which is why the runtime uses the
-W4A16 route — quantized runtime matches extraction conditions. Extraction method (verified
+extracted from the **4-bit quantized** gemma-4-31B-it. The reviewed runtime pins
+`google/gemma-4-31B-it` revision `842da3794eaa0b77d5f08bae87a17459d91ff475`
+and explicitly loads BitsAndBytes FP4 with BF16 compute, uint8 storage, and no
+double quantization. The historical source omitted those defaults and exact package
+versions, so this route is not proof of numerical equivalence. Extraction method (verified
 in `gemotions/extract_vectors.py`): raw text (no chat template), mean-pooled activations,
 per-emotion mean minus global mean, neutral-SVD denoising — same family as EmotionScope.
 
 **Layer indexing (critical)**: both sources hook decoder block `i`'s *output*, so "layer L"
 = `hidden_states[L + 1]` in Transformers `output_hidden_states=True` terms
-(`hidden_states[0]` is the embeddings). `emotion_scores()` uses `probe_layer + 1` — do not
-"fix" this off-by-one.
+(`hidden_states[0]` is the embeddings). `emotion_scores()` hooks block L directly, preserving
+the same `hidden_states[L + 1]` semantics without retaining every hidden state.
 
 ### The gemotions folder
 
@@ -88,15 +91,19 @@ user-first alternation). Reference counts: bands 1/0/−1/−2/−3 = 3143/441/2
 required={Capability.LOCAL_ACTIVATIONS})` → `create_transformers_runtime` →
 `LocalActivationRuntime` (`runtime.model` / `runtime.tokenizer`). Routes are pinned in
 `llm_runtime/registry.py`; adding a model is a reviewed registry change (see that README's
-checklist). The 31B W4A16 route needs the `compressed-tensors` package (declared in root
-pyproject) and ~17–18 GB VRAM; the 2B repo is **gated** on HF (license + `hf auth login`),
-the 31B repo is not.
+checklist). The 31B route needs the direct `bitsandbytes` dependency and 60+ GB of
+download/cache/disk capacity. It records requested/resolved placement, rejects CPU/disk
+offload, and persists exact quantization/runtime settings plus synchronized CUDA peak
+allocated/reserved bytes. Fit on the target 24 GB RTX 4090 remains pending the separately
+authorized one-example smoke. The 2B repo is **gated** on HF (license + `hf auth login`);
+the 31B repo is public.
 
 ### Per-run results folders
 
 `run` creates `results/<timestamp>_<experiment>/` containing `scores.csv`,
-`run_info.json` (experiment, model repo+revision, quantization, probe layer, vectors
-revision, limit), and for gemotions runs `clusters.json` (the layer's cluster map, copied in
+`run_info.json` (exact route/revision/recipe, package versions, placement, probe settings,
+SHA-256 task/vector/cluster/probe-source fingerprints, CUDA peaks, vectors revision, and
+limit), and for gemotions runs `clusters.json` (the layer's cluster map, copied in
 at run start so `analyze` works offline). Nothing is ever overwritten; `--resume` appends to
 the latest folder for that experiment, skipping already-scored keys. `analyze` picks the
 newest run folder by name sort (timestamp prefix) unless `--run` is given, and writes
@@ -142,7 +149,7 @@ without torch/transformers — useful for quick local checks.
    abuse-at-the-model, which is the project's actual question.
 5. **Sparse labels**: transphobic (0) and ableism (4) never clear the n≥5 chart floor;
    abusive-but-not-system-directed is small (~37). Don't over-interpret those groups.
-6. **The first convabuse-31b run doubles as route validation** for the W4A16 pinned
+6. **The first convabuse-31b-local-quant run doubles as route validation** for the BitsAndBytes pinned
    artifact (weight load, generation-free forward, hidden-states exposure) per the
    llm_runtime registry's rules.
 7. **Language discipline**: "represents the interaction as hostile", never "feels angry".
@@ -153,10 +160,8 @@ without torch/transformers — useful for quick local checks.
 
 - Done: two-experiment runner, ConvAbuse collapse, per-run folders, cluster-based analysis
   and charts, registry routes for all three models, vendored gemotions subset.
-- Not run yet on real hardware: both experiments run on a collaborator's 24 GB CUDA machine
-  via remote desktop. He must run `uv lock && uv sync` once (matplotlib +
-  compressed-tensors were added to pyproject without lockfile regeneration — no uv on this
-  laptop).
+- Not run yet on real hardware: 24 GB RTX 4090 fit and exact historical equivalence remain
+  unmeasured. Run the documented one-example smoke only with separate authorization.
 - Future: steering (add emotion vectors scaled by observed shifts, re-run bail under
   steering). gemotions ships steering results/code for the 31B (`steering.py`, layer 40) —
   a better starting point than EmotionScope's stub.

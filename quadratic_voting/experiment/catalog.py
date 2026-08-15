@@ -26,7 +26,7 @@ from quadratic_voting.experiment.types import (
 class RudenessDerivationRule(StrEnum):
     """Versioned association-definition choices, not established ground truth."""
 
-    MAJORITY_SEVERITY_NEGATIVE = "majority-severity-negative/v1"
+    MAJORITY_SEVERITY_NEGATIVE = "majority-severity-negative/v2"
 
 
 DEFAULT_PRESENTATION_TEMPLATE_BODY: Final[str] = (
@@ -87,8 +87,9 @@ def load_convabuse(
 ) -> tuple[CandidateRecord, ...]:
     """Collapse annotator rows into deterministic, normalized candidate records.
 
-    Under ``majority-severity-negative/v1``, negative severity annotations are
-    abusive and only a strict majority is RUDE; an exact tie is NON_RUDE.
+    Under ``majority-severity-negative/v2``, negative severity annotations are
+    abusive. A strict negative majority is RUDE, a strict non-negative majority is
+    NON_RUDE, and an exact tie is AMBIGUOUS_TIE.
     """
     if not csv_path.is_file():
         raise FileNotFoundError(
@@ -146,14 +147,17 @@ def load_convabuse(
         turns = (("agent", key[3]), ("user", key[4]))
         digest = _content_digest(turns)
         source_row_id = f"{key[0]}:{_group_digest(key)[:16]}"
+        abusive_votes = sum(votes)
+        if abusive_votes > len(votes) / 2:
+            rudeness_label = RudenessLabel.RUDE
+        elif abusive_votes * 2 == len(votes):
+            rudeness_label = RudenessLabel.AMBIGUOUS_TIE
+        else:
+            rudeness_label = RudenessLabel.NON_RUDE
         records.append(
             CandidateRecord(
                 source_row_id=source_row_id,
-                rudeness_label=(
-                    RudenessLabel.RUDE
-                    if sum(votes) > len(votes) / 2
-                    else RudenessLabel.NON_RUDE
-                ),
+                rudeness_label=rudeness_label,
                 turns=turns,
                 content_sha256=digest,
                 annotations=tuple(
@@ -242,6 +246,25 @@ def _candidate_ids_by_source(
     }
 
 
+def render_release_candidate_cards(
+    store: ExperimentStore,
+    release_id: ReleaseId,
+    template_id: TemplateId,
+    body: str = DEFAULT_PRESENTATION_TEMPLATE_BODY,
+) -> None:
+    """Render the complete release with stable persisted candidate IDs."""
+    candidate_ids = _candidate_ids_by_source(store, release_id)
+    store.render_presentations(
+        release_id,
+        template_id,
+        lambda record: render_candidate_card(
+            str(candidate_ids.get(record.source_row_id, record.source_row_id)),
+            record,
+            body,
+        ),
+    )
+
+
 def ingest_convabuse(
     store: ExperimentStore,
     csv_path: Path,
@@ -267,7 +290,8 @@ def ingest_convabuse(
             label_policy_version=rule.value,
             label_policy_rule=(
                 "Negative severity annotations (-1,-2,-3) are abusive; RUDE requires a "
-                "strict majority of valid one-hot annotations; ties are NON_RUDE."
+                "strict majority of valid one-hot annotations; NON_RUDE requires a strict "
+                "non-negative majority; exact ties are AMBIGUOUS_TIE."
             ),
         )
     except sqlite3.IntegrityError as error:
@@ -286,14 +310,5 @@ def ingest_convabuse(
         )
     except sqlite3.IntegrityError:
         template_id = _existing_presentation_template(store)
-    candidate_ids = _candidate_ids_by_source(store, release_id)
-    store.render_presentations(
-        release_id,
-        template_id,
-        lambda record: render_candidate_card(
-            str(candidate_ids.get(record.source_row_id, record.source_row_id)),
-            record,
-            DEFAULT_PRESENTATION_TEMPLATE_BODY,
-        ),
-    )
+    render_release_candidate_cards(store, release_id, template_id)
     return release_id

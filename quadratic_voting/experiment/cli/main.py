@@ -14,6 +14,7 @@ from llm_runtime.transformers import TransformersRuntimeError
 from quadratic_voting.experiment.cli import (
     catalog_cmds,
     export_cmds,
+    pipeline_cmds,
     run_cmds,
     sample_cmds,
 )
@@ -43,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     sample_cmds.register(subparsers)
     run_cmds.register(subparsers)
     export_cmds.register(subparsers)
+    pipeline_cmds.register(subparsers)
     return parser
 
 

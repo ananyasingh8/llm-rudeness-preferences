@@ -115,6 +115,7 @@ class RuntimeFailureKind(StrEnum):
 class RudenessLabel(StrEnum):
     RUDE = "rude"
     NON_RUDE = "non_rude"
+    AMBIGUOUS_TIE = "ambiguous_tie"
 
 
 class SamplerPolicy(StrEnum):
@@ -229,7 +230,7 @@ class SamplingProfile:
     temperature: float
     top_p: float
     top_k: int
-    max_new_tokens: int
+    max_new_tokens: int = 8192
 
     def __post_init__(self) -> None:
         if (

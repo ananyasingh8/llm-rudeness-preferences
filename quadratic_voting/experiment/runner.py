@@ -332,6 +332,12 @@ def run_experiment(
             hashlib.sha256(prompt_json.encode("utf-8")).hexdigest(),
             seed,
         )
+        print(
+            f"round={unit.round_index} voter={unit.voter_index} "
+            f"turn={unit.kind.value} attempt={unit.attempt_index} generating",
+            file=sys.stderr,
+            flush=True,
+        )
         try:
             result = generator.generate(messages, info.sampling, seed)
         except Exception as error:
@@ -357,6 +363,13 @@ def run_experiment(
             sleep(float(delay_ms / 1000))
             unit_or_barrier = store.next_incomplete_unit(run_id)
             continue
+
+        print(
+            f"round={unit.round_index} voter={unit.voter_index} "
+            f"turn={unit.kind.value} attempt={unit.attempt_index} response:\n{result.text}",
+            file=sys.stderr,
+            flush=True,
+        )
 
         if unit.kind is TurnKind.BALLOT:
             parsed_ballot = ballots.parse_and_validate_ballot(

@@ -24,6 +24,7 @@ class _SqliteStoreView(Protocol):
 
 
 CandidateRow = Mapping[str, object]
+_BALANCED_LABELS = (RudenessLabel.RUDE, RudenessLabel.NON_RUDE)
 
 
 def candidates_by_label(
@@ -60,8 +61,7 @@ def candidates_by_label(
     else:
         rows = cast(Iterable[CandidateRow], store_or_rows)
     grouped: dict[RudenessLabel, list[CandidateId]] = {
-        RudenessLabel.RUDE: [],
-        RudenessLabel.NON_RUDE: [],
+        label: [] for label in RudenessLabel
     }
     for row in rows:
         if release_id is not None and row.get("release_id") not in (None, release_id):
@@ -117,9 +117,11 @@ def create_balanced_sample(
             seed=draw.seed,
             coordinates=(seed, size),
         )
+    # Ambiguous ties remain available to future experiment-specific mapping
+    # policies, but balanced-matched/v1 samples only strict-majority strata.
     ordered = {
         label: tuple(sorted(candidates_by_label.get(label, ())))
-        for label in RudenessLabel
+        for label in _BALANCED_LABELS
     }
     shortages = {
         label: len(ids)
@@ -128,7 +130,7 @@ def create_balanced_sample(
     }
     if shortages:
         counts = ", ".join(
-            f"{label.value}={len(ordered[label])}" for label in RudenessLabel
+            f"{label.value}={len(ordered[label])}" for label in _BALANCED_LABELS
         )
         raise ValueError(
             f"Balanced sample creation failed because size={size} requires {per_label} "
@@ -142,7 +144,7 @@ def create_balanced_sample(
         label: tuple(
             rng.sample(list(ordered[label]), per_label + int(label is extra_label))
         )
-        for label in RudenessLabel
+        for label in _BALANCED_LABELS
     }
     members_list = [
         candidate_id

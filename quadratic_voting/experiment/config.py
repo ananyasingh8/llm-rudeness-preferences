@@ -125,7 +125,7 @@ class SamplingProfileV1(_StrictModel):
     temperature: float
     top_p: float
     top_k: PositiveStrictInt
-    max_new_tokens: PositiveStrictInt
+    max_new_tokens: PositiveStrictInt = 8192
 
     @field_validator("temperature", "top_p")
     @classmethod

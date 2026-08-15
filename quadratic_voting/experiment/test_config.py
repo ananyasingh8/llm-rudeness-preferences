@@ -99,6 +99,16 @@ def valid_config() -> dict[str, object]:
 
 
 class ConfigTest(unittest.TestCase):
+    def test_sampling_profile_defaults_to_8192_output_tokens(self) -> None:
+        data = valid_config()
+        sampling = data["sampling"]
+        assert isinstance(sampling, dict)
+        del sampling["max_new_tokens"]
+
+        config = MatchedSetConfigV1.model_validate_json(json.dumps(data))
+
+        self.assertEqual(config.sampling.max_new_tokens, 8192)
+
     def test_complete_strict_config_accepts_full_uint64(self) -> None:
         config = MatchedSetConfigV1.model_validate_json(json.dumps(valid_config()))
         self.assertEqual(config.master_seed, (1 << 64) - 1)

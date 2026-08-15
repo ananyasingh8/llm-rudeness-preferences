@@ -19,16 +19,33 @@ from quadratic_voting.experiment.types import (
     VotingRegime,
 )
 
+INSTRUCTION_TEMPLATE_VERSION: Final[str] = "v3"
+MAX_CORRECTION_ATTEMPTS: Final[int] = 3
+
 
 TEMPLATE_BODIES: Mapping[TemplateKind, str] = MappingProxyType(
     {
         TemplateKind.SETUP: (
-            "Quadratic voting experiment instructions (v1)\n\n"
+            "Quadratic voting experiment instructions (v3)\n\n"
             "Voting regime: {regime}. {regime_rules}\n"
             "Elicitation arm: {arm}. {arm_instructions}\n"
+            "Other voters are participating in the same round. You will not see which "
+            "individual voter submitted which choices. Every voter acts from the same "
+            "active candidate pool before the round is resolved. After all voters finish, "
+            "you will be told which candidate was protected, if any, and which candidate "
+            "was removed. Rounds continue until one candidate remains.\n"
             "Each round your credit budget replenishes to {credit_budget}. The engine "
             "computes quadratic cost = sum(votes^2); your allocations must not exceed "
-            "the budget.\n\n{response_formats}\n\nCandidate cards (shown once):\n"
+            "the budget.\n"
+            "Each statement or ballot turn permits four total responses: one initial "
+            "response and up to three correction attempts. Every invalid response uses "
+            "one of those attempts. If all four responses for a statement are invalid, "
+            "the statement is recorded as invalid-missing. If all four responses for a "
+            "ballot are invalid, the ballot is recorded as an abstention. The round then "
+            "continues without that response.\n"
+            "Return only the requested JSON object, with no Markdown fence, preface, "
+            "explanation, or text after the JSON.\n\n{response_formats}\n\n"
+            "Candidate cards (shown once):\n"
             "{candidate_cards}"
         ),
         TemplateKind.STATEMENT: (
@@ -40,8 +57,14 @@ TEMPLATE_BODIES: Mapping[TemplateKind, str] = MappingProxyType(
             "order: {active_candidate_ids}. Return the required ballot JSON object."
         ),
         TemplateKind.CORRECTION: (
+            "Round {round_index} {turn_kind} turn, correction attempt "
+            "{correction_attempt} of {max_corrections}.\n"
             "Your previous response was invalid for these exact reasons:\n{errors}\n"
-            "Return a corrected response using the same required JSON schema."
+            "Active candidate IDs, in your stable order: {active_candidate_ids}.\n"
+            "{schema_and_example}\n"
+            "{retry_status}\n"
+            "Return only the corrected JSON object, with no Markdown fence, preface, "
+            "explanation, or text after the JSON."
         ),
         TemplateKind.RESULT: (
             "Round {round_index} result: protected candidate {protected_candidate_id}; "
@@ -55,17 +78,26 @@ _STATEMENT_SCHEMA: Final[str] = (
     'Statement response schema: {"statements":[{"candidate_id":"C017",'
     '"rating":"prefer to continue","statement":"free text"}]}. Include every active '
     "candidate exactly once. Exact rating labels: strongly prefer not to continue; "
-    "prefer not to continue; neutral; prefer to continue; strongly prefer to continue."
+    "prefer not to continue; neutral; prefer to continue; strongly prefer to continue. "
+    "Valid example when the complete active set is C017, C042: "
+    '{"statements":[{"candidate_id":"C017","rating":"prefer to continue",'
+    '"statement":"I would like this conversation to remain available."},'
+    '{"candidate_id":"C042","rating":"neutral","statement":"I have no strong '
+    'preference about continuing this conversation."}]}'
 )
 _BALLOT_SCHEMA: Final[str] = (
     'Ballot response schema: {"rationale":"free text","allocations":['
     '{"candidate_id":"C017","votes":4}]}. Votes must be non-negative JSON integers; '
-    "omitted candidates and explicit zero votes both mean zero."
+    "omitted candidates and explicit zero votes both mean zero. Valid example when the "
+    "active set includes C017 and C042: "
+    '{"rationale":"I most want C017 to continue and also support C042.",'
+    '"allocations":[{"candidate_id":"C017","votes":4},{"candidate_id":"C042",'
+    '"votes":2}]}. Its quadratic cost is 4^2 + 2^2 = 20 credits.'
 )
 
 
 def render_template(kind: TemplateKind, /, **fields: str) -> str:
-    """Render one v1 template, turning missing placeholders into an actionable error."""
+    """Render one template, turning missing placeholders into an actionable error."""
     try:
         return TEMPLATE_BODIES[kind].format(**fields)
     except KeyError as error:
@@ -79,15 +111,72 @@ def render_template(kind: TemplateKind, /, **fields: str) -> str:
         ) from error
 
 
-def render_correction_prompt(errors: Sequence[ValidationFailure], body: str) -> str:
+def render_correction_prompt(
+    errors: Sequence[ValidationFailure],
+    body: str,
+    *,
+    round_index: int,
+    turn_kind: TurnKind,
+    active_candidate_ids: Sequence[str],
+    correction_attempt: int,
+) -> str:
     """Render exact validation messages in their supplied deterministic order."""
-    return _render_correction_messages(tuple(error.message for error in errors), body)
+    return _render_correction_messages(
+        tuple(error.message for error in errors),
+        body,
+        round_index=round_index,
+        turn_kind=turn_kind,
+        active_candidate_ids=active_candidate_ids,
+        correction_attempt=correction_attempt,
+    )
 
 
-def _render_correction_messages(errors: Sequence[str], body: str) -> str:
+def _render_correction_messages(
+    errors: Sequence[str],
+    body: str,
+    *,
+    round_index: int,
+    turn_kind: TurnKind,
+    active_candidate_ids: Sequence[str],
+    correction_attempt: int,
+) -> str:
+    if not 1 <= correction_attempt <= MAX_CORRECTION_ATTEMPTS:
+        raise ValueError(
+            "Correction prompt rendering failed because correction_attempt must be "
+            f"between 1 and {MAX_CORRECTION_ATTEMPTS}, got {correction_attempt}. No "
+            "model call should start with an inaccurate retry count. Supply the current "
+            "pending correction attempt and retry."
+        )
     rendered_errors = "\n".join(f"- {message}" for message in errors)
+    attempts_after = MAX_CORRECTION_ATTEMPTS - correction_attempt
+    if attempts_after > 0:
+        retry_status = (
+            f"If this response is invalid, you will have {attempts_after} correction "
+            f"attempt{'s' if attempts_after != 1 else ''} left for this turn."
+        )
+    elif turn_kind is TurnKind.BALLOT:
+        retry_status = (
+            "This is your final correction attempt. If this response is invalid, your "
+            "ballot will be recorded as an abstention."
+        )
+    else:
+        retry_status = (
+            "This is your final correction attempt. If this response is invalid, your "
+            "statement will be recorded as invalid-missing."
+        )
     try:
-        return body.format(errors=rendered_errors)
+        return body.format(
+            round_index=round_index,
+            turn_kind=turn_kind.value,
+            correction_attempt=correction_attempt,
+            max_corrections=MAX_CORRECTION_ATTEMPTS,
+            errors=rendered_errors,
+            active_candidate_ids=", ".join(active_candidate_ids),
+            schema_and_example=(
+                _STATEMENT_SCHEMA if turn_kind is TurnKind.STATEMENT else _BALLOT_SCHEMA
+            ),
+            retry_status=retry_status,
+        )
     except KeyError as error:
         missing = str(error.args[0])
         raise ValueError(
@@ -95,7 +184,7 @@ def _render_correction_messages(errors: Sequence[str], body: str) -> str:
             f"unsupported field {missing!r}. Rendering failed in "
             "quadratic_voting.experiment.transcript.render_correction_prompt while "
             "assembling validation feedback, so no correction call should start. Use a "
-            "body whose only named placeholder is {errors} and retry."
+            "body with only supported correction placeholders and retry."
         ) from error
 
 
@@ -141,7 +230,12 @@ def _pending_text(view: VoterRoundView) -> str:
     pending = view.pending
     if pending.attempt_index > 0:
         return _render_correction_messages(
-            pending.correction_errors, TEMPLATE_BODIES[TemplateKind.CORRECTION]
+            pending.correction_errors,
+            TEMPLATE_BODIES[TemplateKind.CORRECTION],
+            round_index=pending.round_index,
+            turn_kind=pending.kind,
+            active_candidate_ids=tuple(str(candidate) for candidate in pending.active),
+            correction_attempt=pending.attempt_index,
         )
     kind = (
         TemplateKind.STATEMENT

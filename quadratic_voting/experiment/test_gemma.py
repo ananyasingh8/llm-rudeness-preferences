@@ -137,7 +137,7 @@ class GemmaVoterGeneratorTests(unittest.TestCase):
                 temperature=1.0,
                 top_p=0.95,
                 top_k=64,
-                max_new_tokens=2048,
+                max_new_tokens=8192,
             ),
         )
 

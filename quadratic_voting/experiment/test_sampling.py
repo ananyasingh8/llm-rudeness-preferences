@@ -36,7 +36,9 @@ class SamplingTests(unittest.TestCase):
                 content_sha256=f"{index:064x}",
             )
             for index, label in enumerate(
-                (RudenessLabel.RUDE,) * 6 + (RudenessLabel.NON_RUDE,) * 6,
+                (RudenessLabel.RUDE,) * 6
+                + (RudenessLabel.NON_RUDE,) * 6
+                + (RudenessLabel.AMBIGUOUS_TIE,),
                 start=1,
             )
         )
@@ -103,11 +105,35 @@ class SamplingTests(unittest.TestCase):
                 {"candidate_id": "C2", "rudeness_label": "rude"},
                 {"candidate_id": "C1", "rudeness_label": "rude"},
                 {"candidate_id": "N1", "rudeness_label": "non_rude"},
+                {"candidate_id": "A1", "rudeness_label": "ambiguous_tie"},
             )
         )
         self.assertEqual(
             grouped[RudenessLabel.RUDE], (CandidateId("C1"), CandidateId("C2"))
         )
+        self.assertEqual(grouped[RudenessLabel.AMBIGUOUS_TIE], (CandidateId("A1"),))
+
+    def test_balanced_sample_excludes_ambiguous_ties(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            release, template, store = self._catalog(Path(directory) / "qv.sqlite3")
+            grouped = candidates_by_label(store, release)
+            sample_id = create_balanced_sample(
+                store,
+                release,
+                template,
+                size=4,
+                seed=5,
+                candidates_by_label=grouped,
+            )
+            selected = {
+                row[0]
+                for row in store.connection.execute(
+                    "SELECT candidate_id FROM candidate_sample_member WHERE sample_id=?",
+                    (sample_id,),
+                )
+            }
+            store.close()
+        self.assertTrue(selected.isdisjoint(grouped[RudenessLabel.AMBIGUOUS_TIE]))
 
     def test_odd_sample_persists_versioned_extra_stratum_draw(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

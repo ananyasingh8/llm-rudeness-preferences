@@ -3107,6 +3107,12 @@ def open_sqlite_store(
             "stopped transactionally before writes. Upgrade through the missing intermediate "
             "application version, then reopen with this build."
         )
+    # Additive identity storage also upgrades databases initialized by the
+    # previous v1 schema without changing experiment data.
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS pipeline_database_identity "
+        "(database_id TEXT PRIMARY KEY) STRICT"
+    )
     return SqliteExperimentStore(
         connection, path, commit_hook, freeze_hook, writer_lock, owns_writer_lock
     )

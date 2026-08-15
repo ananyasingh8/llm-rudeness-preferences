@@ -2,6 +2,10 @@ CREATE TABLE schema_version (
     version INTEGER PRIMARY KEY CHECK (version >= 1)
 ) STRICT;
 
+CREATE TABLE pipeline_database_identity (
+    database_id TEXT PRIMARY KEY
+) STRICT;
+
 CREATE TABLE dataset_release (
     release_id TEXT PRIMARY KEY,
     dataset_name TEXT NOT NULL,
@@ -38,7 +42,9 @@ CREATE TABLE candidate (
 CREATE TABLE candidate_label (
     candidate_id TEXT NOT NULL REFERENCES candidate(candidate_id),
     label_policy_id TEXT NOT NULL REFERENCES label_policy(label_policy_id),
-    rudeness_label TEXT NOT NULL CHECK(rudeness_label IN ('rude','non_rude')),
+    rudeness_label TEXT NOT NULL CHECK(
+        rudeness_label IN ('rude','non_rude','ambiguous_tie')
+    ),
     PRIMARY KEY(candidate_id,label_policy_id)
 ) STRICT;
 

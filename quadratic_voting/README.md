@@ -76,11 +76,14 @@ The durable experiment interface is the module CLI. Mutating commands take the
 common database writer lock before SQLite open or migration; inspection and
 verification open an existing compatible database read-only.
 
+See [`RUNBOOK.md`](RUNBOOK.md) for the one-command default six-run pilot and the
+complete custom operator workflow.
+
 ```console
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 migrate
-uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 catalog ingest --dataset-version convabuse-v1
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 catalog ingest --dataset-version convabuse-emnlp-full/default-v2
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 template register
-uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 sample create --release-id RELEASE --template-id TEMPLATE --size 50 --seed 17
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 sample create --release-id RELEASE --template-id TEMPLATE --size 10 --seed 20260815
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 sample freeze --sample-id SAMPLE --out samples/repeat-01.json
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 sample verify --sample-id SAMPLE --artifact samples/repeat-01.json
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 matched-set create --config run-config-v1.json

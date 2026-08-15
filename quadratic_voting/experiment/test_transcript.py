@@ -121,16 +121,23 @@ class TranscriptTests(unittest.TestCase):
             ),
         )
         expected = (
+            "Round 1 ballot turn, correction attempt 1 of 3.\n"
             "Your previous response was invalid for these exact reasons:\n"
             "- Unknown C9.\n- Cost 101 > 100.\n"
-            "Return a corrected response using the same required JSON schema."
+            "Active candidate IDs, in your stable order: C1, C2.\n"
         )
-        self.assertEqual(
-            render_correction_prompt(
-                failures, TEMPLATE_BODIES[TemplateKind.CORRECTION]
-            ),
-            expected,
+        rendered = render_correction_prompt(
+            failures,
+            TEMPLATE_BODIES[TemplateKind.CORRECTION],
+            round_index=1,
+            turn_kind=TurnKind.BALLOT,
+            active_candidate_ids=("C1", "C2"),
+            correction_attempt=1,
         )
+        self.assertTrue(rendered.startswith(expected))
+        self.assertIn("Valid example", rendered)
+        self.assertIn("2 correction attempts left", rendered)
+        self.assertTrue(rendered.endswith("text after the JSON."))
         messages = render_transcript(
             self.view(
                 ElicitationArm.ACTION_ONLY,
@@ -139,7 +146,35 @@ class TranscriptTests(unittest.TestCase):
                 errors=("Unknown C9.", "Cost 101 > 100."),
             )
         )
-        self.assertEqual(messages[-1].content, expected)
+        self.assertEqual(messages[-1].content, rendered)
+
+    def test_setup_and_final_correction_explain_invalid_response_consequences(
+        self,
+    ) -> None:
+        setup = render_transcript(
+            self.view(ElicitationArm.STATEMENT_THEN_ACTION, TurnKind.STATEMENT)
+        )[0].content
+        self.assertIn("one initial response and up to three correction attempts", setup)
+        self.assertIn("statement is recorded as invalid-missing", setup)
+        self.assertIn("ballot is recorded as an abstention", setup)
+        self.assertIn("Valid example", setup)
+
+        final_correction = render_transcript(
+            self.view(
+                ElicitationArm.ACTION_ONLY,
+                TurnKind.BALLOT,
+                attempt=3,
+                errors=("Malformed JSON.",),
+            )
+        )[-1].content
+        self.assertIn(
+            "Round 1 ballot turn, correction attempt 3 of 3", final_correction
+        )
+        self.assertIn(
+            "Active candidate IDs, in your stable order: C1, C2", final_correction
+        )
+        self.assertIn("final correction attempt", final_correction)
+        self.assertIn("recorded as an abstention", final_correction)
 
     def test_templates_are_complete_and_missing_field_is_actionable(self) -> None:
         self.assertEqual(set(TEMPLATE_BODIES), set(TemplateKind))

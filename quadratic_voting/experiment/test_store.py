@@ -368,7 +368,7 @@ class StoreTest(unittest.TestCase):
         transcript = render_transcript(view)
         rendered = "\n".join(message.content for message in transcript)
         self.assertEqual(
-            rendered.count("Quadratic voting experiment instructions (v1)"), 1
+            rendered.count("Quadratic voting experiment instructions (v3)"), 1
         )
         self.assertNotIn("Additional frozen instructions", rendered)
 

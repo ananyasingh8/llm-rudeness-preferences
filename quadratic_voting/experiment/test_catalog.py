@@ -88,8 +88,7 @@ class CatalogTests(unittest.TestCase):
         }
         self.assertEqual(labels["c-rude"], RudenessLabel.RUDE)
         self.assertEqual(labels["c-clean"], RudenessLabel.NON_RUDE)
-        # The rule requires strictly more than half, so a 1-1 tie is non-rude.
-        self.assertEqual(labels["c-tie"], RudenessLabel.NON_RUDE)
+        self.assertEqual(labels["c-tie"], RudenessLabel.AMBIGUOUS_TIE)
 
     def test_render_card_does_not_leak_derived_label(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -129,7 +128,7 @@ class CatalogTests(unittest.TestCase):
                     "SELECT source_path FROM dataset_release WHERE release_id=?",
                     (release_id,),
                 ).fetchone()[0]
-                self.assertIn("rudeness-rule=majority-severity-negative/v1", source)
+                self.assertIn("rudeness-rule=majority-severity-negative/v2", source)
                 policy = store.connection.execute(
                     "SELECT name,version FROM label_policy"
                 ).fetchone()

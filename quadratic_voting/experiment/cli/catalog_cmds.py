@@ -14,7 +14,10 @@ from quadratic_voting.experiment.catalog import (
     ingest_convabuse,
 )
 from quadratic_voting.experiment.store import open_sqlite_store
-from quadratic_voting.experiment.transcript import TEMPLATE_BODIES
+from quadratic_voting.experiment.transcript import (
+    INSTRUCTION_TEMPLATE_VERSION,
+    TEMPLATE_BODIES,
+)
 from quadratic_voting.experiment.types import TemplateKind
 
 
@@ -65,7 +68,12 @@ def _templates(args: argparse.Namespace) -> int:
                 )
             presentation_id = row[0]
         registered = [
-            (kind, store.register_template(kind, "v1", TEMPLATE_BODIES[kind]))
+            (
+                kind,
+                store.register_template(
+                    kind, INSTRUCTION_TEMPLATE_VERSION, TEMPLATE_BODIES[kind]
+                ),
+            )
             for kind in TemplateKind
         ]
     instruction_output = " ".join(

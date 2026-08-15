@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import contextlib
 import csv
 import io
@@ -20,14 +21,49 @@ from llm_runtime import (
     QuantizationId,
     resolve_route,
 )
+from llm_runtime.registry import HuggingFaceArtifact
+from quadratic_voting.experiment.cli import pipeline_cmds
 from quadratic_voting.experiment.cli.main import main
 from quadratic_voting.experiment.runner import collect_execution_environment
 from quadratic_voting.experiment.store import acquire_writer_lock
+from quadratic_voting.experiment.test_catalog import write_fixture
 from quadratic_voting.experiment.test_runner import ScriptedGenerator, make_runs
 from quadratic_voting.experiment.types import ElicitationArm, VotingRegime
 
 
 class ExperimentCliTests(unittest.TestCase):
+    def _default_pipeline_command(self, root: Path) -> tuple[list[str], Path, Path]:
+        db = root / "pipeline.sqlite3"
+        dataset = root / "convabuse.csv"
+        output = root / "default-pilot"
+        write_fixture(dataset)
+        return (
+            [
+                "--db",
+                str(db),
+                "pipeline",
+                "run",
+                "--dataset-path",
+                str(dataset),
+                "--dataset-version",
+                "fixture-default-v2",
+                "--output-dir",
+                str(output),
+                "--sample-size",
+                "2",
+                "--sample-seed",
+                "17",
+                "--master-seed",
+                "29",
+                "--voters",
+                "2",
+                "--device",
+                "cpu",
+            ],
+            db,
+            output,
+        )
+
     def _write_run_config(
         self, db: Path, sample_id: str, artifact: Path, destination: Path
     ) -> None:
@@ -497,6 +533,364 @@ class ExperimentCliTests(unittest.TestCase):
             png_files = tuple(plot_dir.glob("*.png"))
             self.assertTrue(png_files)
             self.assertTrue(all(path.is_file() for path in png_files))
+
+    def test_default_pipeline_runs_six_conditions_and_rerun_reuses_manifest(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command, db, output = self._default_pipeline_command(root)
+
+            first = self._invoke(command, generator=True)
+            connection = sqlite3.connect(db)
+            first_counts = (
+                connection.execute("SELECT COUNT(*) FROM matched_set").fetchone()[0],
+                connection.execute("SELECT COUNT(*) FROM experiment_run").fetchone()[0],
+                connection.execute("SELECT COUNT(*) FROM run_execution").fetchone()[0],
+            )
+            connection.close()
+
+            second = self._invoke(command, generator=True)
+            connection = sqlite3.connect(db)
+            second_counts = (
+                connection.execute("SELECT COUNT(*) FROM matched_set").fetchone()[0],
+                connection.execute("SELECT COUNT(*) FROM experiment_run").fetchone()[0],
+                connection.execute("SELECT COUNT(*) FROM run_execution").fetchone()[0],
+            )
+            connection.close()
+
+            self.assertIn("pipeline=complete", first)
+            self.assertIn("status=resuming", second)
+            self.assertEqual(first_counts, (1, 6, 6))
+            self.assertEqual(second_counts, first_counts)
+            self.assertTrue((output / "manifest.json").is_file())
+            self.assertTrue((output / "sample.json").is_file())
+            self.assertTrue((output / "run-config.json").is_file())
+            self.assertTrue(tuple((output / "export").glob("*.parquet")))
+            self.assertTrue(tuple((output / "plots").glob("*.png")))
+
+            db.unlink()
+            error = io.StringIO()
+            with contextlib.redirect_stderr(error):
+                self.assertEqual(
+                    main(
+                        command,
+                        generator_factory=lambda _profile: ScriptedGenerator(),
+                    ),
+                    1,
+                )
+            self.assertIn("references missing database", error.getvalue())
+            self.assertFalse(db.exists())
+
+    def test_default_pipeline_recovers_commit_to_checkpoint_interruptions(self) -> None:
+        boundaries = (
+            ("catalog", "ingest"),
+            ("sample", "create"),
+            ("matched-set", "create"),
+            ("export",),
+            ("plot",),
+        )
+        for boundary in boundaries:
+            with (
+                self.subTest(boundary=boundary),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                command, db, _output = self._default_pipeline_command(Path(directory))
+                original_invoke = pipeline_cmds._invoke
+                interrupted = False
+
+                def interrupt_after_success(
+                    args: argparse.Namespace, nested_command: list[str]
+                ) -> str:
+                    nonlocal interrupted
+                    result = original_invoke(args, nested_command)
+                    if (
+                        not interrupted
+                        and tuple(nested_command[: len(boundary)]) == boundary
+                    ):
+                        interrupted = True
+                        raise RuntimeError("injected post-commit interruption")
+                    return result
+
+                with patch.object(
+                    pipeline_cmds, "_invoke", side_effect=interrupt_after_success
+                ):
+                    self.assertEqual(
+                        main(
+                            command,
+                            generator_factory=lambda _profile: ScriptedGenerator(),
+                        ),
+                        1,
+                    )
+                self.assertTrue(interrupted)
+
+                resumed = self._invoke(command, generator=True)
+                connection = sqlite3.connect(db)
+                counts = (
+                    connection.execute(
+                        "SELECT COUNT(*) FROM dataset_release"
+                    ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM candidate_sample"
+                    ).fetchone()[0],
+                    connection.execute("SELECT COUNT(*) FROM matched_set").fetchone()[
+                        0
+                    ],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM experiment_run"
+                    ).fetchone()[0],
+                )
+                connection.close()
+                self.assertIn("pipeline=complete", resumed)
+                self.assertEqual(counts, (1, 1, 1, 6))
+
+    def test_default_pipeline_rejects_changed_dataset_bytes_on_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command, _db, _output = self._default_pipeline_command(root)
+            self._invoke(command, generator=True)
+            dataset = root / "convabuse.csv"
+            dataset.write_bytes(dataset.read_bytes() + b"\n")
+            error = io.StringIO()
+            with contextlib.redirect_stderr(error):
+                self.assertEqual(
+                    main(
+                        command, generator_factory=lambda _profile: ScriptedGenerator()
+                    ),
+                    1,
+                )
+            self.assertIn("dataset", error.getvalue())
+            self.assertIn("changed", error.getvalue())
+
+    def test_default_pipeline_rejects_missing_database_for_partial_manifest(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command, db, output = self._default_pipeline_command(root)
+            self._invoke(command, generator=True)
+            manifest_path = output / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest.pop("matched_set_id")
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            db.unlink()
+            error = io.StringIO()
+            with contextlib.redirect_stderr(error):
+                self.assertEqual(
+                    main(
+                        command, generator_factory=lambda _profile: ScriptedGenerator()
+                    ),
+                    1,
+                )
+            self.assertIn("references missing database", error.getvalue())
+
+    def test_default_pipeline_rejects_fresh_replacement_database_before_catalog_work(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command, db, output = self._default_pipeline_command(root)
+            with patch.object(
+                pipeline_cmds,
+                "_ensure_release",
+                side_effect=RuntimeError("early interruption"),
+            ):
+                self.assertEqual(
+                    main(
+                        command, generator_factory=lambda _profile: ScriptedGenerator()
+                    ),
+                    1,
+                )
+            self.assertTrue((output / "manifest.json").is_file())
+            db.unlink()
+            self.assertEqual(main(["--db", str(db), "migrate"]), 0)
+            error = io.StringIO()
+            with contextlib.redirect_stderr(error):
+                self.assertEqual(
+                    main(
+                        command, generator_factory=lambda _profile: ScriptedGenerator()
+                    ),
+                    1,
+                )
+            self.assertIn("database identity changed", error.getvalue())
+            connection = sqlite3.connect(db)
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM dataset_release").fetchone()[
+                    0
+                ],
+                0,
+            )
+            connection.close()
+
+    def test_default_pipeline_rejects_replacement_sample_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command, _db, output = self._default_pipeline_command(root)
+            self._invoke(command, generator=True)
+            manifest_path = output / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest.pop("matched_set_id")
+            manifest["sample_id"] = "replacement-sample-id"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            error = io.StringIO()
+            with contextlib.redirect_stderr(error):
+                self.assertEqual(
+                    main(
+                        command, generator_factory=lambda _profile: ScriptedGenerator()
+                    ),
+                    1,
+                )
+            self.assertIn("missing sample ID", error.getvalue())
+
+    def test_model_provenance_requires_complete_snapshot_and_detects_drift(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "snapshot"
+            snapshot.mkdir()
+            for name in (
+                ".gitattributes",
+                "README.md",
+                "chat_template.jinja",
+                "config.json",
+                "generation_config.json",
+                "model.safetensors",
+                "processor_config.json",
+                "tokenizer_config.json",
+                "tokenizer.json",
+            ):
+                (snapshot / name).write_bytes(name.encode())
+            provenance = pipeline_cmds._model_provenance(
+                snapshot, repository="repo", revision="revision"
+            )
+            self.assertEqual(provenance["repository"], "repo")
+            self.assertNotIn("unavailable", json.dumps(provenance))
+            (snapshot / "special_tokens_map.json").write_bytes(b"unexpected")
+            with self.assertRaisesRegex(ValueError, "unexpected files"):
+                pipeline_cmds._model_provenance(
+                    snapshot, repository="repo", revision="revision"
+                )
+            (snapshot / "special_tokens_map.json").unlink()
+            (snapshot / "model.safetensors").write_bytes(b"changed")
+            changed = pipeline_cmds._model_provenance(
+                snapshot, repository="repo", revision="revision"
+            )
+            self.assertNotEqual(provenance, changed)
+            (snapshot / "config.json").unlink()
+            with self.assertRaisesRegex(ValueError, "essential files"):
+                pipeline_cmds._model_provenance(
+                    snapshot, repository="repo", revision="revision"
+                )
+
+    def test_bind_model_provenance_is_durable_and_rejects_snapshot_or_route_drift(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            for name in pipeline_cmds._MODEL_SNAPSHOT_FILES:
+                (snapshot / name).write_bytes(name.encode())
+            route = resolve_route(
+                ModelId.GEMMA_4_E2B_IT, ProviderId.LOCAL, QuantizationId.BF16
+            )
+            assert isinstance(route, LocalTransformersRoute)
+            args = argparse.Namespace(cache_dir=root)
+            manifest: dict[str, object] = {}
+            manifest_path = root / "manifest.json"
+            with patch.object(
+                pipeline_cmds,
+                "download_transformers_artifact",
+                return_value=snapshot,
+            ):
+                pipeline_cmds._bind_model_provenance(args, manifest, manifest_path)
+                first = manifest_path.read_bytes()
+                pipeline_cmds._bind_model_provenance(args, manifest, manifest_path)
+                self.assertEqual(first, manifest_path.read_bytes())
+                (snapshot / "README.md").write_bytes(b"changed")
+                with self.assertRaisesRegex(ValueError, "provenance drift"):
+                    pipeline_cmds._bind_model_provenance(args, manifest, manifest_path)
+                (snapshot / "README.md").write_bytes(b"README.md")
+                drifted = replace(
+                    route,
+                    artifact=HuggingFaceArtifact(
+                        route.artifact.repository, "different-revision"
+                    ),
+                )
+                with (
+                    patch.object(pipeline_cmds, "resolve_route", return_value=drifted),
+                    self.assertRaisesRegex(ValueError, "provenance drift"),
+                ):
+                    pipeline_cmds._bind_model_provenance(args, manifest, manifest_path)
+                second_snapshot = root / "second-snapshot"
+                second_snapshot.mkdir()
+                for name in pipeline_cmds._MODEL_SNAPSHOT_FILES:
+                    (second_snapshot / name).write_bytes(name.encode())
+                with (
+                    patch.object(
+                        pipeline_cmds,
+                        "download_transformers_artifact",
+                        return_value=second_snapshot,
+                    ),
+                    self.assertRaisesRegex(ValueError, "provenance drift"),
+                ):
+                    pipeline_cmds._bind_model_provenance(args, manifest, manifest_path)
+
+    def test_derived_artifact_reuse_requires_source_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "export"
+            manifest_path = root / "manifest.json"
+            manifest: dict[str, object] = {}
+            args = argparse.Namespace()
+            calls: list[list[str]] = []
+
+            def generate(_args: argparse.Namespace, command: list[str]) -> str:
+                calls.append(command)
+                output.mkdir(exist_ok=True)
+                (output / "result.txt").write_text(str(len(calls)), encoding="utf-8")
+                return ""
+
+            binding = {"matched_set_id": "matched", "source_fingerprint": "one"}
+            with patch.object(pipeline_cmds, "_invoke", side_effect=generate):
+                self.assertTrue(
+                    pipeline_cmds._ensure_derived_artifact(
+                        args,
+                        manifest,
+                        manifest_path,
+                        output=output,
+                        manifest_key="export_files",
+                        binding_key="export_binding",
+                        source_binding=binding,
+                        command=["export"],
+                    )
+                )
+                self.assertFalse(
+                    pipeline_cmds._ensure_derived_artifact(
+                        args,
+                        manifest,
+                        manifest_path,
+                        output=output,
+                        manifest_key="export_files",
+                        binding_key="export_binding",
+                        source_binding=binding,
+                        command=["export"],
+                    )
+                )
+                changed = {"matched_set_id": "matched", "source_fingerprint": "two"}
+                self.assertTrue(
+                    pipeline_cmds._ensure_derived_artifact(
+                        args,
+                        manifest,
+                        manifest_path,
+                        output=output,
+                        manifest_key="export_files",
+                        binding_key="export_binding",
+                        source_binding=changed,
+                        command=["export"],
+                    )
+                )
+            self.assertEqual(len(calls), 2)
 
 
 if __name__ == "__main__":

@@ -212,16 +212,29 @@ the job log to `slurm-emotion-probing-<job-id>.out` in the submission directory.
 
 ## What analyze produces
 
-Printed tables + `analysis.csv` + charts in `<run>/figures/`:
+Printed tables + `analysis.csv` + charts in `<run>/figures/`. Re-analysis needs no model or
+GPU — it reads `scores.csv` and runs in seconds anywhere.
 
-- **bailbench**: per-emotion rude-minus-normal deltas (diverging bars), hostility-cluster
-  delta by rudeness formula, per-pair delta histogram.
-- **convabuse**: severity trend for the Anger/Hostility and Positive/Joy clusters,
-  per-cluster shift under abuse (using the gemotions unsupervised clustering of all 171
-  emotions into 15 groups), top-10 rising/falling emotions labeled by cluster, hostility by
-  abuse target (system-directed vs other — the headline cut for "rudeness at the model"),
-  by abuse type, and by directness (explicit/implicit). Groups smaller than 5 examples are
-  dropped from charts.
+- **bailbench** (`figures/`): per-emotion rude-minus-normal deltas (diverging bars),
+  hostility-cluster delta by rudeness formula, per-pair delta histogram.
+- **convabuse**: all severity shifts are measured against the baseline band
+  (`BASELINE_BAND` in `analyze/convabuse.py`, currently 0 = ambiguous). Two shared
+  map figures recur throughout, both placing all 171 emotions at their real gemotions PCA
+  coordinates: the **cluster map** (15 cluster names + hulls around clusters containing
+  highlighted emotions) and the **PC1/PC2 map** (same points, axes annotated as
+  valence/disposition with quadrant guides). Folders:
+  - `figures/bands/` — per severity band: the 10 biggest risers and 10 biggest fallers vs
+    the baseline band (the baseline band itself shows its raw top-10 resting profile) +
+    both maps with those emotions highlighted.
+  - `figures/comparison/` — band −3 vs the baseline band: the 10 biggest risers and 10
+    biggest fallers as diverging bars, plus both maps with risers in red and fallers in
+    blue.
+  - `figures/overview/` — a 171-row heatmap (emotion × severity band, cell = shift vs the
+    baseline band, sorted by the −3 shift) and grouped bars showing the top 10 risers +
+    10 fallers' raw activation across all five bands.
+  - `figures/breakdowns/` — hostility by abuse target (system-directed vs other — the
+    headline cut for "rudeness at the model"), by abuse type, and by directness, using the
+    majority-vote abusive flag. Groups smaller than 5 examples are dropped.
 
 Scores are cosine similarities and are small in absolute terms — only differences between
 groups/conditions are meaningful. Wording discipline: the vectors capture the model's
@@ -244,7 +257,7 @@ submodule, no git-lfs, nothing extra to download.
 ```
 main.py          # runner: download | run (experiment configs at the top)
 datasets.py      # dataset loaders + the ConvAbuse annotation collapse
-analyze.py       # per-run analysis: tables, analysis.csv, charts
+analyze/         # per-run analysis package (common, maps, convabuse, bailbench)
 data/            # ConvAbuseEMNLPfull.csv
 results/         # one folder per run (never overwritten)
 EmotionScope/    # vendored 2B vector-extraction repo (vectors .pt used)

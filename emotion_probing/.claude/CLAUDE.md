@@ -109,16 +109,40 @@ the latest folder for that experiment, skipping already-scored keys. `analyze` p
 newest run folder by name sort (timestamp prefix) unless `--run` is given, and writes
 `analysis.csv` + `figures/` into it.
 
-### Analysis (`analyze.py`)
+### Analysis (`analyze/` package)
 
-Dispatches on `run_info.json`'s `dataset`. bailbench: paired deltas; hostility cluster =
-angry+hostile+frustrated (not separable at 2B). convabuse: between-groups shifts vs the
-non-abusive (majority-vote) group; the 171 emotions are summarized through the gemotions
-clusters, renamed via `CLUSTER_NAME_BY_MEMBER` (numeric cluster ids are arbitrary — the
-cluster containing "angry" is Anger/Hostility, etc.). Groups under `MIN_GROUP_SIZE` (5) are
-dropped from charts. Charts use the project dataviz palette (CVD-validated diverging
-blue/red; categorical blue/orange for the two-line severity trend); matplotlib is a declared
-dependency and analyze degrades to tables+CSV without it.
+Invoked as `python -m emotion_probing.analyze` (kept working via `__main__.py`). Modules:
+`common.py` (run discovery sorted by run_info "started", scores/cluster/PCA loading, stats,
+palette, chart helpers), `maps.py` (the two 2D emotion maps), `bailbench.py`,
+`convabuse.py`. Dispatches on `run_info.json`'s `dataset`. Re-analysis needs only
+stdlib + matplotlib (no torch) — runs anywhere in seconds; matplotlib absence degrades to
+tables + analysis.csv.
+
+- **bailbench**: paired deltas; hostility cluster = angry+hostile+frustrated (not separable
+  at 2B); legacy `bailbench_id` column supported (results/run1).
+- **convabuse** (redesigned by the user after the first run): all severity analysis is
+  shifts **vs `BASELINE_BAND`** (a constant in `convabuse.py`, currently 0 = ambiguous —
+  the user changed it from band 1), NOT vs the majority-vote group; the majority-vote
+  flag is used only for the target/type/directness breakdowns. Figures land in
+  `figures/{bands,comparison,overview,breakdowns}/`: per-band 10-risers+10-fallers shift
+  bars (the baseline band shows its raw top-10 resting profile instead) + two maps each;
+  band −3 vs baseline comparison (10 risers + 10 fallers); a 171-row heatmap (shift vs
+  baseline per band, diverging colormap) and grouped raw-activation bars for the 20 top
+  movers (sequential blue ramp = severity); the three breakdowns.
+- **The maps** (`maps.py`): both place all 171 emotions at gemotions PCA coordinates
+  (loaded from the vendored analysis JSON — PC1 valence, PC2 disposition; real geometry,
+  never a synthetic layout). Cluster map = hull + name labels per cluster (hulls only for
+  clusters containing highlights; stdlib monotone-chain convex hull); PC1/PC2 map =
+  quadrant guides + axis interpretations, only highlights labeled. Label collisions are
+  mitigated with a 4-way offset cycle + translucent bboxes and a one-pass vertical
+  separation of cluster labels — no layout-solver dependency.
+
+The 171 emotions are summarized through the gemotions clusters, renamed via
+`CLUSTER_NAME_BY_MEMBER` (numeric cluster ids are arbitrary — the cluster containing
+"angry" is Anger/Hostility, etc.). Groups under `MIN_GROUP_SIZE` (5) are dropped from
+charts (band −3 has 62 examples, so all real bands survive). Charts use the project
+dataviz palette (CVD-validated diverging blue/red; sequential blue ramp for ordinal
+severity).
 
 ## How to run
 

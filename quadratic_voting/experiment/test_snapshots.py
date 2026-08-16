@@ -120,10 +120,35 @@ class SnapshotTests(AnalysisFixture):
             sorted(("C1", "C10", "C2"), key=candidate_label_sort_key),
             ["C1", "C2", "C10"],
         )
+        expected_votes = {
+            str(self.candidates[0]): 4,
+            str(self.candidates[1]): 2,
+            str(self.candidates[2]): 1,
+        }
+        runs = payload["runs"]
+        self.assertIsInstance(runs, list)
+        assert isinstance(runs, list)
+        for run in runs:
+            if run["arm"] != "statement-then-action":
+                continue
+            run_frame = run["frames"][0]
+            actual_votes = {
+                row["id"]: row["aggregateVotes"] for row in run_frame["candidates"]
+            }
+            self.assertEqual(actual_votes, expected_votes)
+            if run["regime"] == "Most Votes Kept":
+                self.assertEqual(
+                    run_frame["outcome"]["protected"], str(self.candidates[0])
+                )
+            else:
+                self.assertEqual(
+                    run_frame["outcome"]["removed"], str(self.candidates[0])
+                )
         out_dir = self.root / "analysis"
         build_snapshot_tables(export_dir, out_dir)
         rendered = render_timeline_html(export_dir, out_dir).read_text(encoding="utf-8")
         self.assertIn("candidate-sidebar", rendered)
+        self.assertIn("Aggregate votes:", rendered)
         self.assertIn("Voter statements and ballot evidence", rendered)
         self.assertIn("Optional raw source annotation provenance", rendered)
         self.assertNotIn(".slice(0,42)", rendered)

@@ -137,14 +137,14 @@ class ExperimentConfig:
 # (prefer a stable plateau over a lone spike), then set the layer and the
 # extraction run folder name here. Until both are set, selecting the
 # convabuse-31b-base experiment fails with instructions; download still works.
-BASE_PROBE_LAYER: int | None = 13  # picked from the extraction sweep's scorecard
-BASE_VECTORS_RUN: str | None = "2026-08-16_000402_extract-gemma4-e4b-it"
+BASE_PROBE_LAYER: int | None = 40  # picked from the extraction sweep's scorecard
+BASE_VECTORS_RUN: str | None = "2026-08-15_182042_extract-gemma4-31b-base"
 
 # --- E4B probing: same pinning pattern, from the gemma4-e4b extraction -------
 # (`uv run python -m emotion_probing.extract run` — the default extraction —
 # then pick the layer from its layer_quality.json scorecard).
-E4B_PROBE_LAYER: int | None = None
-E4B_VECTORS_RUN: str | None = None
+E4B_PROBE_LAYER: int | None = 13
+E4B_VECTORS_RUN: str | None = "2026-08-16_000402_extract-gemma4-e4b-it"
 
 # --- Experiment constants: edit these to change the model setups. ------------
 EXPERIMENTS: dict[ExperimentId, ExperimentConfig] = {

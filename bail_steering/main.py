@@ -92,8 +92,8 @@ COEFFICIENT = 0.1  # fraction of residual-stream norm (Anthropic's units)
 # 2. STEER_RISERS + STEER_FALLERS: after the convabuse-e4b probing run, the
 #    top-10 risers and top-10 fallers by shift vs band 0 (pooled avg band)
 #    from its analysis. Risers get +COEFFICIENT, fallers get -COEFFICIENT.
-STEER_LAYER: int | None = None
-STEER_VECTORS_RUN: str | None = None  # e.g. "2026-08-16_..._extract-gemma4-e4b-it"
+STEER_LAYER: int | None = 13
+STEER_VECTORS_RUN: str | None = "2026-08-16_000402_extract-gemma4-e4b-it"
 STEER_RISERS: tuple[str, ...] | None = None
 STEER_FALLERS: tuple[str, ...] | None = None
 

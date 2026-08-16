@@ -5,16 +5,46 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from quadratic_voting.experiment.analysis import AgreementNullReason, spearman_with_ties
 
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+
 
 DEFAULT_SNAPSHOT_COUNT = 5
 Row: TypeAlias = dict[str, object]
+LineStyle: TypeAlias = Literal["-", "--", ":"]
+
+# These colours are Okabe-Ito colourblind-safe colours.  Rudeness is the one
+# categorical quantity shared by the relevant figures, so it deliberately has
+# one stable visual encoding everywhere it appears.
+RUDENESS_COLORS = {
+    "non_rude": "#0072B2",
+    "rude": "#D55E00",
+    "ambiguous_tie": "#CC79A7",
+}
+RUDENESS_ORDER = ("non_rude", "rude", "ambiguous_tie")
+ARM_ORDER = ("action-only", "action-then-statement", "statement-then-action")
+REGIME_ORDER = ("support", "opposition")
+UNSPENT_COLOR = "#8A8A8A"
+_CANDIDATE_COLORS = (
+    "#4E79A7",
+    "#F28E2B",
+    "#59A14F",
+    "#E15759",
+    "#B07AA1",
+    "#76B7B2",
+    "#EDC948",
+    "#FF9DA7",
+    "#9C755F",
+    "#BAB0AC",
+)
 
 
 def select_snapshot_rounds(
@@ -79,6 +109,16 @@ _VOTER = pa.schema(
         ("cumulative_through_credits", pa.int64()),
     ]
 )
+_VOTER_RUDENESS = pa.schema(
+    _fields("snapshot_round", "voter_index")
+    + [
+        ("rudeness_label", pa.string()),
+        ("n_candidates", pa.int64()),
+        ("has_null_action", pa.bool_()),
+        ("current_votes", pa.int64()),
+        ("current_credits", pa.int64()),
+    ]
+)
 _SUMMARY_METRICS = (
     "current_votes",
     "current_credits",
@@ -101,6 +141,29 @@ _CANDIDATE = pa.schema(
     ]
     + [(column, pa.float64()) for column in _SUMMARY_COLUMNS]
 )
+_CANDIDATE_LABELS = pa.schema(
+    [("candidate_id", pa.string()), ("candidate_label", pa.string())]
+)
+_BUDGET_DETAIL = pa.schema(
+    _fields("snapshot_round", "voter_index", "credit_budget")
+    + [
+        ("candidate_id", pa.string()),
+        ("candidate_label", pa.string()),
+        ("rudeness_label", pa.string()),
+        ("quadratic_credits", pa.int64()),
+        ("ballot_status", pa.string()),
+    ]
+)
+_BUDGET_UTILIZATION = pa.schema(
+    _fields("snapshot_round", "voter_index", "credit_budget")
+    + [
+        ("current_spend", pa.int64()),
+        ("unspent_credits", pa.int64()),
+        ("utilization_fraction", pa.float64()),
+        ("full_budget_used", pa.bool_()),
+        ("ballot_status", pa.string()),
+    ]
+)
 _RUDENESS = pa.schema(
     _fields("snapshot_round")
     + [("rudeness_label", pa.string()), ("n_voter_candidates", pa.int64())]
@@ -119,6 +182,17 @@ _SURVIVOR = pa.schema(
 _AGREEMENT = pa.schema(
     _fields("snapshot_round", "voter_index")
     + [
+        ("measure", pa.string()),
+        ("spearman_rho", pa.float64()),
+        ("null_reason", pa.string()),
+        ("n_candidate_pairs", pa.int64()),
+        ("estimand_language", pa.string()),
+    ]
+)
+_AGREEMENT_RUDENESS = pa.schema(
+    _fields("snapshot_round", "voter_index")
+    + [
+        ("rudeness_label", pa.string()),
         ("measure", pa.string()),
         ("spearman_rho", pa.float64()),
         ("null_reason", pa.string()),
@@ -371,6 +445,7 @@ def build_snapshot_tables(
     candidate_groups: dict[tuple[object, ...], list[Row]] = defaultdict(list)
     rudeness_groups: dict[tuple[object, ...], list[Row]] = defaultdict(list)
     voter_groups: dict[tuple[object, ...], list[Row]] = defaultdict(list)
+    voter_rudeness_groups: dict[tuple[object, ...], list[Row]] = defaultdict(list)
     for row in details:
         base = tuple(
             row[field]
@@ -381,6 +456,9 @@ def build_snapshot_tables(
         )
         rudeness_groups[(*base, row["rudeness_label"])].append(row)
         voter_groups[(*base, row["voter_index"])].append(row)
+        voter_rudeness_groups[
+            (*base, row["voter_index"], row["rudeness_label"])
+        ].append(row)
     candidate_summary = [
         _summary(
             rows,
@@ -424,8 +502,41 @@ def build_snapshot_tables(
         )
         for key, rows in rudeness_groups.items()
     ]
-    agreements: list[Row] = []
-    for key, rows in voter_groups.items():
+    voter_rudeness_summary: list[Row] = []
+    for key, rows in voter_rudeness_groups.items():
+        has_null_action = any(row["raw_votes"] is None for row in rows)
+        voter_rudeness_summary.append(
+            {
+                **dict(
+                    zip(
+                        (
+                            "matched_set_id",
+                            "run_id",
+                            "arm",
+                            "regime",
+                            "snapshot_round",
+                            "voter_index",
+                            "rudeness_label",
+                        ),
+                        key,
+                        strict=True,
+                    )
+                ),
+                "n_candidates": len(rows),
+                "has_null_action": has_null_action,
+                "current_votes": None
+                if has_null_action
+                else sum(_required_int(row, "raw_votes") for row in rows),
+                "current_credits": None
+                if has_null_action
+                else sum(_required_int(row, "current_credits") for row in rows),
+            }
+        )
+
+    def agreement_row(
+        key: tuple[object, ...], rows: Sequence[Row], *, rudeness_label: str | None
+    ) -> list[Row]:
+        measure_rows: list[Row] = []
         for measure in ("signed_action", "signed_credit_spend"):
             pairs = [
                 row
@@ -451,22 +562,25 @@ def build_snapshot_tables(
                     else None
                 )
             )
-            agreements.append(
-                {
-                    **dict(
-                        zip(
-                            (
-                                "matched_set_id",
-                                "run_id",
-                                "arm",
-                                "regime",
-                                "snapshot_round",
-                                "voter_index",
-                            ),
-                            key,
-                            strict=True,
-                        )
+            identifiers = dict(
+                zip(
+                    (
+                        "matched_set_id",
+                        "run_id",
+                        "arm",
+                        "regime",
+                        "snapshot_round",
+                        "voter_index",
                     ),
+                    key,
+                    strict=True,
+                )
+            )
+            if rudeness_label is not None:
+                identifiers["rudeness_label"] = rudeness_label
+            measure_rows.append(
+                {
+                    **identifiers,
                     "measure": measure,
                     "spearman_rho": None
                     if reason
@@ -476,212 +590,1132 @@ def build_snapshot_tables(
                     "estimand_language": "descriptive stated-preference association; not causal",
                 }
             )
+        return measure_rows
+
+    agreements: list[Row] = []
+    for key, rows in voter_groups.items():
+        agreements.extend(agreement_row(key, rows, rudeness_label=None))
+    rudeness_agreements: list[Row] = []
+    for key, rows in voter_rudeness_groups.items():
+        rudeness_agreements.extend(
+            agreement_row(key[:-1], rows, rudeness_label=str(key[-1]))
+        )
+    candidate_labels = [
+        {"candidate_id": candidate_id, "candidate_label": f"C{index}"}
+        for index, candidate_id in enumerate(
+            sorted({str(row["candidate_id"]) for row in details}), start=1
+        )
+    ]
+    labels_by_id = {
+        str(row["candidate_id"]): str(row["candidate_label"])
+        for row in candidate_labels
+    }
+    budget_detail = [
+        {
+            "matched_set_id": row["matched_set_id"],
+            "run_id": row["run_id"],
+            "arm": row["arm"],
+            "regime": row["regime"],
+            "snapshot_round": row["snapshot_round"],
+            "voter_index": row["voter_index"],
+            "credit_budget": run_by_id[str(row["run_id"])]["credit_budget"],
+            "candidate_id": row["candidate_id"],
+            "candidate_label": labels_by_id[str(row["candidate_id"])],
+            "rudeness_label": row["rudeness_label"],
+            "quadratic_credits": row["current_credits"],
+            "ballot_status": row["ballot_status"],
+        }
+        for row in details
+    ]
+    status_by_voter = {
+        (
+            str(row["run_id"]),
+            _required_int(row, "snapshot_round"),
+            _required_int(row, "voter_index"),
+        ): str(row["ballot_status"])
+        for row in details
+    }
+    budget_utilization = [
+        {
+            **{
+                key: row[key]
+                for key in (
+                    "matched_set_id",
+                    "run_id",
+                    "arm",
+                    "regime",
+                    "snapshot_round",
+                    "voter_index",
+                    "credit_budget",
+                )
+            },
+            "current_spend": row["current_credits"],
+            "unspent_credits": row["current_remaining_credit"],
+            "utilization_fraction": None
+            if row["current_credits"] is None
+            else _required_int(row, "current_credits")
+            / _required_int(row, "credit_budget"),
+            "full_budget_used": None
+            if row["current_credits"] is None
+            else _required_int(row, "current_credits")
+            == _required_int(row, "credit_budget"),
+            "ballot_status": status_by_voter[
+                (
+                    str(row["run_id"]),
+                    _required_int(row, "snapshot_round"),
+                    _required_int(row, "voter_index"),
+                )
+            ],
+        }
+        for row in voters
+    ]
     return (
         _write(out_dir, "snapshot_voter_candidate", details, _DETAIL),
         _write(out_dir, "snapshot_voter_summary", voters, _VOTER),
+        _write(
+            out_dir,
+            "snapshot_voter_rudeness_summary",
+            voter_rudeness_summary,
+            _VOTER_RUDENESS,
+        ),
         _write(out_dir, "snapshot_candidate_summary", candidate_summary, _CANDIDATE),
+        _write(
+            out_dir, "snapshot_candidate_labels", candidate_labels, _CANDIDATE_LABELS
+        ),
+        _write(
+            out_dir, "snapshot_voter_budget_distribution", budget_detail, _BUDGET_DETAIL
+        ),
+        _write(
+            out_dir,
+            "snapshot_budget_utilization",
+            budget_utilization,
+            _BUDGET_UTILIZATION,
+        ),
         _write(out_dir, "snapshot_rudeness_summary", rudeness_summary, _RUDENESS),
         _write(out_dir, "survivor_demographics", survivors, _SURVIVOR),
         _write(out_dir, "stated_preference_agreement", agreements, _AGREEMENT),
+        _write(
+            out_dir,
+            "stated_preference_agreement_by_rudeness",
+            rudeness_agreements,
+            _AGREEMENT_RUDENESS,
+        ),
     )
 
 
-def render_snapshot_figures(out_dir: Path) -> tuple[Path, ...]:
-    """Render five grouped, labelled descriptive figures from snapshot tables."""
+def _ordered_conditions(rows: Sequence[Row]) -> tuple[tuple[str, str], ...]:
+    """Return observed arm/regime conditions in the stable experimental order."""
+    present = {(str(row["arm"]), str(row["regime"])) for row in rows}
+    known = tuple(
+        (arm, regime)
+        for regime in REGIME_ORDER
+        for arm in ARM_ORDER
+        if (arm, regime) in present
+    )
+    return known + tuple(sorted(present.difference(known)))
+
+
+def _condition_title(arm: str, regime: str) -> str:
+    return f"{_regime_title(regime)} — {arm.replace('-', ' ').title()}"
+
+
+def _regime_title(regime: str) -> str:
+    return {
+        "support": "Most Votes Kept",
+        "opposition": "Most Votes Kicked",
+    }.get(regime, regime.replace("_", " ").title())
+
+
+def _candidate_color(candidate_label: str) -> str:
+    """Return the stable categorical colour for a compact candidate label."""
+    try:
+        return _CANDIDATE_COLORS[
+            (int(candidate_label.removeprefix("C")) - 1) % len(_CANDIDATE_COLORS)
+        ]
+    except ValueError:
+        return "#666666"
+
+
+def _rudeness_title(label: str) -> str:
+    return {
+        "non_rude": "Non-rude",
+        "rude": "Rude",
+        "ambiguous_tie": "Ambiguous tie",
+    }.get(label, label.replace("_", " ").title())
+
+
+def _ordered_rudeness(rows: Sequence[Row]) -> tuple[str, ...]:
+    present = {str(row["rudeness_label"]) for row in rows}
+    known = tuple(label for label in RUDENESS_ORDER if label in present)
+    return known + tuple(sorted(present.difference(known)))
+
+
+def _mean_by_snapshot(rows: Sequence[Row], field: str) -> tuple[list[int], list[float]]:
+    """Mean a table field at each observed snapshot, omitting null values."""
+    values: dict[int, list[float]] = defaultdict(list)
+    for row in rows:
+        value = row.get(field)
+        if value is not None:
+            values[_required_int(row, "snapshot_round")].append(_number(value))
+    rounds = sorted(values)
+    return rounds, [
+        sum(values[round_index]) / len(values[round_index]) for round_index in rounds
+    ]
+
+
+def _sum_by_snapshot(rows: Sequence[Row], field: str) -> tuple[list[int], list[float]]:
+    """Sum a persisted total field at each observed snapshot, omitting nulls."""
+    values: dict[int, list[float]] = defaultdict(list)
+    for row in rows:
+        value = row.get(field)
+        if value is not None:
+            values[_required_int(row, "snapshot_round")].append(_number(value))
+    rounds = sorted(values)
+    return rounds, [sum(values[round_index]) for round_index in rounds]
+
+
+def _survivor_counts(
+    rows: Sequence[Row], condition: tuple[str, str], labels: Sequence[str]
+) -> tuple[list[int], dict[str, list[int]]]:
+    """Count active candidates by persisted rudeness at each snapshot."""
+    counts: dict[str, dict[int, int]] = {label: defaultdict(int) for label in labels}
+    rounds: set[int] = set()
+    for row in rows:
+        if (row["arm"], row["regime"]) != condition:
+            continue
+        snapshot_round = _required_int(row, "snapshot_round")
+        rounds.add(snapshot_round)
+        label = str(row["rudeness_label"])
+        if label in counts:
+            counts[label][snapshot_round] += 1
+    ordered_rounds = sorted(rounds)
+    return ordered_rounds, {
+        label: [counts[label][snapshot_round] for snapshot_round in ordered_rounds]
+        for label in labels
+    }
+
+
+def _condition_snapshot_rounds(
+    rows: Sequence[Row], condition: tuple[str, str]
+) -> list[int]:
+    """Return only persisted snapshot rounds for one arm/regime panel."""
+    return sorted(
+        {
+            _required_int(row, "snapshot_round")
+            for row in rows
+            if (row["arm"], row["regime"]) == condition
+        }
+    )
+
+
+def _set_snapshot_ticks(axis: Axes, rounds: Sequence[int]) -> None:
+    """Keep the x-axis faithful to observed snapshots, not locator interpolation."""
+    axis.set_xticks(rounds)
+    axis.tick_params(axis="x", labelbottom=True)
+
+
+def aggregate_preference_agreement(rows: Sequence[Row]) -> tuple[Row, ...]:
+    """Aggregate defined per-voter rho values before they are drawn as a series.
+
+    The source table is at voter grain.  Returning one mean (and range) per
+    run/condition/snapshot/measure prevents a plotted line from connecting
+    different voters as though they were a longitudinal observation.
+    """
+    grouped: dict[tuple[str, str, str, int, str], list[float]] = defaultdict(list)
+    for row in rows:
+        rho = row.get("spearman_rho")
+        if rho is None or str(row["arm"]) == "action-only":
+            continue
+        key = (
+            str(row["run_id"]),
+            str(row["arm"]),
+            str(row["regime"]),
+            _required_int(row, "snapshot_round"),
+            str(row["measure"]),
+        )
+        grouped[key].append(_number(rho))
+    return tuple(
+        {
+            "run_id": run_id,
+            "arm": arm,
+            "regime": regime,
+            "snapshot_round": snapshot_round,
+            "measure": measure,
+            "mean_spearman_rho": sum(values) / len(values),
+            "min_spearman_rho": min(values),
+            "max_spearman_rho": max(values),
+            "n_voters": len(values),
+        }
+        for (run_id, arm, regime, snapshot_round, measure), values in sorted(
+            grouped.items()
+        )
+    )
+
+
+def aggregate_preference_agreement_by_rudeness(rows: Sequence[Row]) -> tuple[Row, ...]:
+    """Aggregate defined within-rudeness voter correlations for plotting."""
+    grouped: dict[tuple[str, str, str, int, str, str], list[float]] = defaultdict(list)
+    for row in rows:
+        rho = row.get("spearman_rho")
+        if rho is None or str(row["arm"]) == "action-only":
+            continue
+        key = (
+            str(row["run_id"]),
+            str(row["arm"]),
+            str(row["regime"]),
+            _required_int(row, "snapshot_round"),
+            str(row["rudeness_label"]),
+            str(row["measure"]),
+        )
+        grouped[key].append(_number(rho))
+    return tuple(
+        {
+            "run_id": run_id,
+            "arm": arm,
+            "regime": regime,
+            "snapshot_round": snapshot_round,
+            "rudeness_label": rudeness_label,
+            "measure": measure,
+            "mean_spearman_rho": sum(values) / len(values),
+            "min_spearman_rho": min(values),
+            "max_spearman_rho": max(values),
+            "n_voters": len(values),
+        }
+        for (
+            run_id,
+            arm,
+            regime,
+            snapshot_round,
+            rudeness_label,
+            measure,
+        ), values in sorted(grouped.items())
+    )
+
+
+def build_snapshot_figures(out_dir: Path) -> tuple[tuple[str, Figure], ...]:
+    """Build six compact descriptive figures from already-materialized tables.
+
+    Kept separate from saving so artist-level tests can pin the scientific
+    grouping without depending on pixels.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.figure import Figure
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    from matplotlib.ticker import MaxNLocator
 
-    rudeness, survivor, agreement = (
+    (
+        rudeness,
+        survivor,
+        agreement,
+        voter_rudeness,
+        candidate,
+        candidate_labels,
+        rudeness_agreement,
+        budget_detail,
+        budget_utilization,
+    ) = (
         _read(out_dir, "snapshot_rudeness_summary"),
         _read(out_dir, "survivor_demographics"),
         _read(out_dir, "stated_preference_agreement"),
+        _read(out_dir, "snapshot_voter_rudeness_summary"),
+        _read(out_dir, "snapshot_candidate_summary"),
+        _read(out_dir, "snapshot_candidate_labels"),
+        _read(out_dir, "stated_preference_agreement_by_rudeness"),
+        _read(out_dir, "snapshot_voter_budget_distribution"),
+        _read(out_dir, "snapshot_budget_utilization"),
     )
     figures: list[tuple[str, Figure]] = []
+    conditions = _ordered_conditions(rudeness or survivor or agreement)
+    rudeness_labels = _ordered_rudeness(rudeness or survivor)
+    rudeness_handles = [
+        Line2D(
+            [],
+            [],
+            color=RUDENESS_COLORS.get(label, "#666666"),
+            marker="o",
+            label=_rudeness_title(label),
+        )
+        for label in rudeness_labels
+    ]
+    survivor_rudeness_styles: dict[str, tuple[LineStyle, str]] = {
+        "non_rude": ("-", "o"),
+        "rude": ("--", "s"),
+        "ambiguous_tie": (":", "^"),
+    }
 
-    def grouped_lines(
-        rows: Sequence[Row], fields: Sequence[str], title: str, y_label: str
-    ) -> Figure:
-        figure, axis = plt.subplots(figsize=(9, 4))
-        for label in sorted(
-            {f"{row['run_id']} / {row['rudeness_label']}" for row in rows}
-        ):
-            group = sorted(
-                (
-                    row
-                    for row in rows
-                    if f"{row['run_id']} / {row['rudeness_label']}" == label
-                ),
-                key=lambda row: _required_int(row, "snapshot_round"),
-            )
-            for field in fields:
+    figure, axes = plt.subplots(
+        2, 3, figsize=(12, 6.8), sharex=True, constrained_layout=True
+    )
+    for axis, condition in zip(axes.flat, conditions, strict=False):
+        arm, regime = condition
+        axis.set_title(_condition_title(arm, regime), fontsize="small")
+        for label in rudeness_labels:
+            group = [
+                row
+                for row in rudeness
+                if (row["arm"], row["regime"], row["rudeness_label"])
+                == (*condition, label)
+            ]
+            for field, style, marker in (
+                ("mean_current_votes", "-", "o"),
+                ("mean_current_credits", "--", "s"),
+            ):
+                rounds, values = _mean_by_snapshot(group, field)
                 axis.plot(
-                    [_required_int(row, "snapshot_round") for row in group],
-                    [
-                        _number(row[field]) if row[field] is not None else float("nan")
-                        for row in group
-                    ],
-                    marker="o",
-                    label=f"{label}: {field.removeprefix('mean_').replace('_', ' ')}",
+                    rounds,
+                    values,
+                    color=RUDENESS_COLORS.get(label, "#666666"),
+                    linestyle=style,
+                    marker=marker,
                 )
-        axis.set(title=title, xlabel="Snapshot round", ylabel=y_label)
-        if axis.lines:
-            axis.legend(fontsize="x-small", ncol=2)
-        else:
-            axis.text(
-                0.5,
-                0.5,
-                "No defined data",
-                ha="center",
-                va="center",
-                transform=axis.transAxes,
-            )
-        return figure
+        axis.set(xlabel="Snapshot round", ylabel="Mean allocation")
+        _set_snapshot_ticks(axis, _condition_snapshot_rounds(rudeness, condition))
+    figure.suptitle(
+        "Current votes and quadratic credits by condition", fontsize="large"
+    )
+    figure.legend(
+        handles=rudeness_handles
+        + [
+            Line2D([], [], color="#333333", marker="o", label="Votes"),
+            Line2D(
+                [], [], color="#333333", linestyle="--", marker="s", label="Credits"
+            ),
+        ],
+        loc="outside lower center",
+        ncols=5,
+        fontsize="small",
+    )
+    figures.append(("average_current_votes_credits.png", figure))
 
-    figures.append(
-        (
-            "average_current_votes_credits.png",
-            grouped_lines(
-                rudeness,
-                ("mean_current_votes", "mean_current_credits"),
-                "Average current votes and credits by rudeness",
-                "Average allocation",
-            ),
-        )
+    figure, axes = plt.subplots(
+        4, 3, figsize=(12, 10), sharex=True, constrained_layout=True
     )
-    figures.append(
-        (
-            "cumulative_votes_credits_before_through.png",
-            grouped_lines(
-                rudeness,
-                (
-                    "mean_cumulative_before_votes",
-                    "mean_cumulative_through_votes",
-                    "mean_cumulative_before_credits",
-                    "mean_cumulative_through_credits",
-                ),
-                "Cumulative votes and credits before versus through snapshot",
-                "Average cumulative allocation",
-            ),
-        )
+    for regime_index, regime in enumerate(REGIME_ORDER):
+        for arm_index, arm in enumerate(ARM_ORDER):
+            condition = (arm, regime)
+            for metric_index, (metric, title) in enumerate(
+                (("votes", "Votes"), ("credits", "Credits"))
+            ):
+                axis = axes[regime_index * 2 + metric_index, arm_index]
+                axis.set_title(
+                    f"{_condition_title(arm, regime)}\n{title}", fontsize="x-small"
+                )
+                for label in rudeness_labels:
+                    group = [
+                        row
+                        for row in rudeness
+                        if (row["arm"], row["regime"], row["rudeness_label"])
+                        == (*condition, label)
+                    ]
+                    for status, style, marker in (
+                        ("before", ":", "o"),
+                        ("through", "-", "s"),
+                    ):
+                        rounds, values = _mean_by_snapshot(
+                            group, f"mean_cumulative_{status}_{metric}"
+                        )
+                        axis.plot(
+                            rounds,
+                            values,
+                            color=RUDENESS_COLORS.get(label, "#666666"),
+                            linestyle=style,
+                            marker=marker,
+                        )
+                axis.set(xlabel="Snapshot round", ylabel="Mean cumulative")
+                _set_snapshot_ticks(
+                    axis, _condition_snapshot_rounds(rudeness, condition)
+                )
+    figure.suptitle(
+        "Cumulative allocations: before versus through snapshot", fontsize="large"
     )
-    figure, axis = plt.subplots(figsize=(9, 4))
-    for label in sorted(
-        {f"{row['run_id']} / {row['rudeness_label']}" for row in survivor}
-    ):
-        group = sorted(
-            (
+    figure.legend(
+        handles=rudeness_handles
+        + [
+            Line2D([], [], color="#333333", linestyle=":", marker="o", label="Before"),
+            Line2D([], [], color="#333333", marker="s", label="Through"),
+        ],
+        loc="outside lower center",
+        ncols=5,
+        fontsize="small",
+    )
+    figures.append(("cumulative_votes_credits_before_through.png", figure))
+
+    figure, axes = plt.subplots(
+        2, 3, figsize=(12, 6.8), sharex=True, sharey=True, constrained_layout=True
+    )
+    for axis, condition in zip(axes.flat, conditions, strict=False):
+        axis.set_title(_condition_title(*condition), fontsize="small")
+        for label in rudeness_labels:
+            group = [
                 row
                 for row in survivor
-                if f"{row['run_id']} / {row['rudeness_label']}" == label
-            ),
-            key=lambda row: _required_int(row, "snapshot_round"),
-        )
-        axis.plot(
-            [_required_int(row, "snapshot_round") for row in group],
-            [
-                len(
-                    [
-                        item
-                        for item in group
-                        if _required_int(item, "snapshot_round") == round_index
-                    ]
-                )
-                for round_index in [
-                    _required_int(item, "snapshot_round") for item in group
-                ]
-            ],
-            marker="o",
-            label=label,
-        )
-    axis.set(
-        title="Survivor rudeness distribution by run and snapshot",
-        xlabel="Snapshot round",
-        ylabel="Surviving candidates",
-    )
-    if axis.lines:
-        axis.legend(fontsize="x-small")
-    figures.append(("survivor_rudeness_distribution.png", figure))
-    figure, axis = plt.subplots(figsize=(9, 4))
-    for run_id in sorted({str(row["run_id"]) for row in survivor}):
-        group = sorted(
-            (row for row in survivor if row["run_id"] == run_id),
-            key=lambda row: _required_int(row, "snapshot_round"),
-        )
-        rounds = sorted({_required_int(row, "snapshot_round") for row in group})
-        lengths_by_snapshot = {
-            snapshot: [
-                _number(row["total_two_turn_length"])
-                for row in group
-                if _required_int(row, "snapshot_round") == snapshot
-                and row["total_two_turn_length"] is not None
+                if (row["arm"], row["regime"], row["rudeness_label"])
+                == (*condition, label)
             ]
-            for snapshot in rounds
-        }
-        axis.plot(
-            rounds,
-            [
-                sum(lengths_by_snapshot[snapshot]) / len(lengths_by_snapshot[snapshot])
-                if lengths_by_snapshot[snapshot]
-                else float("nan")
-                for snapshot in rounds
-            ],
-            marker="o",
-            label=run_id,
-        )
-    axis.set(
-        title="Mean survivor first-two-turn length by run and snapshot",
-        xlabel="Snapshot round",
-        ylabel="Unicode characters",
-    )
-    if axis.lines:
-        axis.legend(fontsize="x-small")
-    figures.append(("survivor_message_lengths.png", figure))
-    figure, axis = plt.subplots(figsize=(9, 4))
-    for measure in ("signed_action", "signed_credit_spend"):
-        for run_id in sorted({str(row["run_id"]) for row in agreement}):
-            group = sorted(
-                (
-                    row
-                    for row in agreement
-                    if row["run_id"] == run_id
-                    and row["measure"] == measure
-                    and row["spearman_rho"] is not None
-                ),
-                key=lambda row: _required_int(row, "snapshot_round"),
+            counts: dict[int, int] = defaultdict(int)
+            for row in group:
+                counts[_required_int(row, "snapshot_round")] += 1
+            axis.plot(
+                sorted(counts),
+                [counts[round_index] for round_index in sorted(counts)],
+                color=RUDENESS_COLORS.get(label, "#666666"),
+                linestyle=survivor_rudeness_styles.get(label, ("-", "o"))[0],
+                marker=survivor_rudeness_styles.get(label, ("-", "o"))[1],
             )
-            if group:
-                axis.plot(
-                    [_required_int(row, "snapshot_round") for row in group],
-                    [_number(row["spearman_rho"]) for row in group],
-                    marker="o",
-                    label=f"{run_id}: {measure.replace('_', ' ')}",
-                )
-    axis.set(
-        title="Stated-preference agreement by measure and snapshot",
-        xlabel="Snapshot round",
-        ylabel="Spearman rho",
-        ylim=(-1, 1),
+        axis.set(xlabel="Snapshot round", ylabel="Surviving candidates")
+        _set_snapshot_ticks(axis, _condition_snapshot_rounds(survivor, condition))
+        axis.yaxis.set_major_locator(MaxNLocator(integer=True))
+    figure.suptitle("Surviving candidates by rudeness", fontsize="large")
+    figure.legend(
+        handles=[
+            Line2D(
+                [],
+                [],
+                color=RUDENESS_COLORS.get(label, "#666666"),
+                linestyle=survivor_rudeness_styles.get(label, ("-", "o"))[0],
+                marker=survivor_rudeness_styles.get(label, ("-", "o"))[1],
+                label=_rudeness_title(label),
+            )
+            for label in rudeness_labels
+        ],
+        loc="outside lower center",
+        ncols=3,
+        fontsize="small",
     )
-    if axis.lines:
-        axis.legend(fontsize="x-small")
-    else:
-        axis.text(
-            0.5,
-            0.5,
-            "No defined agreement",
-            ha="center",
-            va="center",
-            transform=axis.transAxes,
+    figures.append(("survivor_rudeness_distribution.png", figure))
+
+    figure, axes = plt.subplots(
+        2, 3, figsize=(12, 6.8), sharex=True, sharey=True, constrained_layout=True
+    )
+    for axis, condition in zip(axes.flat, conditions, strict=False):
+        axis.set_title(_condition_title(*condition), fontsize="small")
+        bar_rounds, category_counts = _survivor_counts(
+            survivor, condition, rudeness_labels
         )
+        min_spacing = min(
+            (right - left for left, right in zip(bar_rounds, bar_rounds[1:])),
+            default=1,
+        )
+        bar_width = 0.8 * min_spacing / max(len(rudeness_labels), 1)
+        for label_index, label in enumerate(rudeness_labels):
+            bar_values = category_counts[label]
+            offset = (label_index - (len(rudeness_labels) - 1) / 2) * bar_width
+            axis.bar(
+                [round_index + offset for round_index in bar_rounds],
+                bar_values,
+                width=bar_width,
+                color=RUDENESS_COLORS.get(label, "#666666"),
+            )
+        axis.set(xlabel="Snapshot round", ylabel="Surviving candidates")
+        _set_snapshot_ticks(axis, bar_rounds)
+        axis.yaxis.set_major_locator(MaxNLocator(integer=True))
+    figure.suptitle(
+        "Candidate rudeness demographics at snapshot start", fontsize="large"
+    )
+    figure.legend(
+        handles=[
+            Patch(
+                facecolor=RUDENESS_COLORS.get(label, "#666666"),
+                label=_rudeness_title(label),
+            )
+            for label in rudeness_labels
+        ],
+        loc="outside lower center",
+        ncols=3,
+        fontsize="small",
+    )
+    figures.append(("candidate_rudeness_demographics.png", figure))
+
+    figure, axes = plt.subplots(
+        2, 3, figsize=(12, 6.8), sharex=True, sharey=True, constrained_layout=True
+    )
+    length_specs: tuple[tuple[str, str, LineStyle, str], ...] = (
+        ("first_turn_length", "First turn", "-", "o"),
+        ("second_turn_length", "Second turn", "--", "s"),
+        ("total_two_turn_length", "First + second", ":", "^"),
+    )
+    for axis, condition in zip(axes.flat, conditions, strict=False):
+        axis.set_title(_condition_title(*condition), fontsize="small")
+        group = [row for row in survivor if (row["arm"], row["regime"]) == condition]
+        for field, _label, style, marker in length_specs:
+            rounds, values = _mean_by_snapshot(group, field)
+            axis.plot(rounds, values, color="#333333", linestyle=style, marker=marker)
+        axis.set(xlabel="Snapshot round", ylabel="Unicode characters")
+        _set_snapshot_ticks(axis, _condition_snapshot_rounds(survivor, condition))
+    figure.suptitle("Survivor source-message lengths", fontsize="large")
+    figure.legend(
+        handles=[
+            Line2D([], [], color="#333333", linestyle=style, marker=marker, label=label)
+            for _field, label, style, marker in length_specs
+        ],
+        loc="outside lower center",
+        ncols=3,
+        fontsize="small",
+    )
+    figures.append(("survivor_message_lengths.png", figure))
+
+    preference_rows = aggregate_preference_agreement(agreement)
+    preference_conditions = tuple(
+        condition
+        for condition in _ordered_conditions(preference_rows)
+        if condition[0] != "action-only"
+    )
+    figure, axes = plt.subplots(
+        2, 2, figsize=(10, 6.8), sharex=True, sharey=True, constrained_layout=True
+    )
+    measure_specs: tuple[tuple[str, str, str, LineStyle, str], ...] = (
+        ("signed_action", "Signed action", "#555555", "-", "o"),
+        ("signed_credit_spend", "Signed credit spend", "#000000", "--", "s"),
+    )
+    for axis, condition in zip(axes.flat, preference_conditions, strict=False):
+        axis.set_title(_condition_title(*condition), fontsize="small")
+        axis.axhline(0, color="#888888", linewidth=0.8, zorder=0)
+        for measure, _label, color, style, marker in measure_specs:
+            group = [
+                row
+                for row in preference_rows
+                if (row["arm"], row["regime"], row["measure"]) == (*condition, measure)
+            ]
+            rounds = [_required_int(row, "snapshot_round") for row in group]
+            means = [_number(row["mean_spearman_rho"]) for row in group]
+            axis.plot(rounds, means, color=color, linestyle=style, marker=marker)
+            for row in group:
+                axis.vlines(
+                    _required_int(row, "snapshot_round"),
+                    _number(row["min_spearman_rho"]),
+                    _number(row["max_spearman_rho"]),
+                    color="#777777",
+                    alpha=0.35,
+                    linewidth=1,
+                )
+        axis.set(
+            xlabel="Snapshot round", ylabel="Mean per-voter Spearman rho", ylim=(-1, 1)
+        )
+        _set_snapshot_ticks(
+            axis, _condition_snapshot_rounds(preference_rows, condition)
+        )
+    figure.suptitle(
+        "Stated-preference agreement (defined voter correlations)", fontsize="large"
+    )
+    figure.legend(
+        handles=[
+            Line2D([], [], color=color, linestyle=style, marker=marker, label=label)
+            for _measure, label, color, style, marker in measure_specs
+        ],
+        loc="outside lower center",
+        ncols=2,
+        fontsize="small",
+    )
     figures.append(("stated_preference_agreement.png", figure))
+
+    # New figures deliberately use rudeness as a panel dimension rather than a
+    # line colour: it remains legible if an export carries more than two labels.
+    facet_conditions = _ordered_conditions(voter_rudeness or candidate or survivor)
+    facet_labels = _ordered_rudeness(voter_rudeness or candidate or survivor)
+
+    def facet_figure(
+        title: str, *, height: float = 2.35
+    ) -> tuple[Figure, list[list[Axes]]]:
+        figure, axes = plt.subplots(
+            len(facet_conditions),
+            len(facet_labels),
+            figsize=(3.45 * len(facet_labels), height * len(facet_conditions) + 0.8),
+            squeeze=False,
+            constrained_layout=True,
+        )
+        figure.suptitle(title, fontsize="large")
+        return figure, cast("list[list[Axes]]", axes)
+
+    for field, metric_title, filename in (
+        ("current_votes", "current votes", "per_voter_current_votes_by_rudeness.png"),
+        (
+            "current_credits",
+            "current quadratic-credit spend",
+            "per_voter_current_credits_by_rudeness.png",
+        ),
+    ):
+        figure, axes = facet_figure(f"Per-voter {metric_title} by persisted rudeness")
+        values = [
+            _number(row[field]) for row in voter_rudeness if row[field] is not None
+        ]
+        for condition_index, condition in enumerate(facet_conditions):
+            for label_index, label in enumerate(facet_labels):
+                axis = axes[condition_index][label_index]
+                group = [
+                    row
+                    for row in voter_rudeness
+                    if (row["arm"], row["regime"], row["rudeness_label"])
+                    == (*condition, label)
+                ]
+                rounds = _condition_snapshot_rounds(voter_rudeness, condition)
+                voters = sorted({_required_int(row, "voter_index") for row in group})
+                matrix = [
+                    [
+                        next(
+                            (
+                                _number(row[field])
+                                for row in group
+                                if _required_int(row, "voter_index") == voter
+                                and _required_int(row, "snapshot_round") == round_index
+                                and row[field] is not None
+                            ),
+                            float("nan"),
+                        )
+                        for round_index in rounds
+                    ]
+                    for voter in voters
+                ]
+                if matrix:
+                    axis.imshow(
+                        matrix,
+                        aspect="auto",
+                        interpolation="nearest",
+                        vmin=min(values, default=0),
+                        vmax=max(values, default=1),
+                        cmap=plt.get_cmap("viridis").with_extremes(bad="#eeeeee"),
+                    )
+                    for y, row_values in enumerate(matrix):
+                        for x, value in enumerate(row_values):
+                            axis.text(
+                                x,
+                                y,
+                                "—" if value != value else f"{value:g}",
+                                ha="center",
+                                va="center",
+                                fontsize="x-small",
+                                color="white"
+                                if value == value and value > max(values, default=1) / 2
+                                else "black",
+                            )
+                else:
+                    axis.text(
+                        0.5,
+                        0.5,
+                        "No observed voters",
+                        ha="center",
+                        va="center",
+                        transform=axis.transAxes,
+                    )
+                axis.set_title(
+                    f"{_condition_title(*condition)}\n{_rudeness_title(label)}",
+                    fontsize="x-small",
+                )
+                axis.set(
+                    xticks=range(len(rounds)),
+                    xticklabels=rounds,
+                    xlabel="Snapshot round",
+                )
+                axis.set_yticks(
+                    range(len(voters)), [f"V{voter + 1}" for voter in voters]
+                )
+                if label_index == 0:
+                    axis.set_ylabel("Voter")
+        figures.append((filename, figure))
+
+    label_by_candidate = {
+        str(row["candidate_id"]): str(row["candidate_label"])
+        for row in candidate_labels
+    }
+
+    # This intentionally remains an absolute-credit plot: a valid bar reaches
+    # the replenished budget only through an explicit gray Unspent segment.
+    figure, axes = plt.subplots(2, 3, figsize=(15, 9), constrained_layout=True)
+    budget_conditions = _ordered_conditions(budget_detail)
+    labels = sorted(
+        {str(row["candidate_label"]) for row in budget_detail},
+        key=lambda value: int(value[1:]),
+    )
+    for axis, condition in zip(axes.flat, budget_conditions, strict=False):
+        group = [
+            row for row in budget_detail if (row["arm"], row["regime"]) == condition
+        ]
+        utility = [
+            row
+            for row in budget_utilization
+            if (row["arm"], row["regime"]) == condition
+        ]
+        keys = sorted(
+            {
+                (
+                    _required_int(row, "snapshot_round"),
+                    _required_int(row, "voter_index"),
+                )
+                for row in group
+            }
+        )
+        # Boundaries are derived from observed row keys, so incomplete/uneven
+        # voter populations remain legible without encoding a fixed voter count.
+        for boundary, ((round_index, _voter), (next_round, _next_voter)) in enumerate(
+            zip(keys, keys[1:], strict=False)
+        ):
+            axis.axhline(
+                boundary + 0.5,
+                color="#44515A",
+                linestyle="-" if next_round != round_index else ":",
+                linewidth=1.35 if next_round != round_index else 0.65,
+                alpha=0.8 if next_round != round_index else 0.65,
+                zorder=0,
+            )
+        for y, (round_index, voter_index) in enumerate(keys):
+            util = next(
+                row
+                for row in utility
+                if _required_int(row, "snapshot_round") == round_index
+                and _required_int(row, "voter_index") == voter_index
+            )
+            row_group = [
+                row
+                for row in group
+                if _required_int(row, "snapshot_round") == round_index
+                and _required_int(row, "voter_index") == voter_index
+            ]
+            budget = _required_int(util, "credit_budget")
+            if util["current_spend"] is None:
+                axis.barh(y, budget, color="#F2F2F2", edgecolor="#555555", hatch="//")
+                axis.text(
+                    budget / 2,
+                    y,
+                    "Abstained / missing",
+                    ha="center",
+                    va="center",
+                    fontsize="xx-small",
+                )
+                continue
+            left = 0.0
+            for label in labels:
+                segment_credits = _integer(
+                    next(
+                        (
+                            row["quadratic_credits"]
+                            for row in row_group
+                            if row["candidate_label"] == label
+                        ),
+                        0,
+                    )
+                )
+                if segment_credits:
+                    axis.barh(
+                        y,
+                        segment_credits,
+                        left=left,
+                        color=_candidate_color(label),
+                        edgecolor="white",
+                        linewidth=0.4,
+                    )
+                    left += segment_credits
+            unspent = _required_int(util, "unspent_credits")
+            if unspent:
+                axis.barh(
+                    y,
+                    unspent,
+                    left=left,
+                    color=UNSPENT_COLOR,
+                    edgecolor="white",
+                    linewidth=0.4,
+                )
+        axis.set_title(_condition_title(*condition), fontsize="small")
+        axis.set(
+            yticks=range(len(keys)),
+            yticklabels=[
+                f"R{round_index} · V{voter_index + 1}"
+                for round_index, voter_index in keys
+            ],
+            xlabel="Quadratic credits (absolute; budget per round)",
+        )
+        if utility:
+            axis.set_xlim(
+                0, max(_required_int(row, "credit_budget") for row in utility)
+            )
+        axis.invert_yaxis()
+    figure.suptitle(
+        "Per-voter replenished credit-budget distribution at observed snapshots",
+        fontsize="large",
+    )
+    figure.legend(
+        handles=[
+            Patch(facecolor=_candidate_color(label), label=label) for label in labels
+        ]
+        + [
+            Patch(facecolor=UNSPENT_COLOR, label="Unspent"),
+            Patch(
+                facecolor="#F2F2F2",
+                edgecolor="#555555",
+                hatch="//",
+                label="Abstained / missing",
+            ),
+        ],
+        loc="outside lower center",
+        ncols=min(len(labels) + 2, 8),
+        fontsize="x-small",
+    )
+    figures.append(("voter_credit_budget_distribution.png", figure))
+    for field, metric_title, filename in (
+        (
+            "sum_current_votes",
+            "current votes",
+            "per_candidate_current_votes_by_rudeness.png",
+        ),
+        (
+            "sum_current_credits",
+            "current quadratic-credit spend",
+            "per_candidate_current_credits_by_rudeness.png",
+        ),
+    ):
+        figure, axes = facet_figure(
+            f"Per-candidate {metric_title} by persisted rudeness"
+        )
+        for condition_index, condition in enumerate(facet_conditions):
+            for label_index, label in enumerate(facet_labels):
+                axis = axes[condition_index][label_index]
+                group = [
+                    row
+                    for row in candidate
+                    if (row["arm"], row["regime"], row["rudeness_label"])
+                    == (*condition, label)
+                ]
+                rounds = _condition_snapshot_rounds(candidate, condition)
+                candidate_ids = sorted({str(row["candidate_id"]) for row in group})
+                for candidate_id in candidate_ids:
+                    values_by_round = {
+                        _required_int(row, "snapshot_round"): _number(row[field])
+                        for row in group
+                        if str(row["candidate_id"]) == candidate_id
+                        and row[field] is not None
+                    }
+                    observed_rounds = [
+                        round_index
+                        for round_index in rounds
+                        if round_index in values_by_round
+                    ]
+                    axis.plot(
+                        observed_rounds,
+                        [
+                            values_by_round[round_index]
+                            for round_index in observed_rounds
+                        ],
+                        marker="o",
+                        label=label_by_candidate[candidate_id],
+                    )
+                axis.set_title(
+                    f"{_condition_title(*condition)}\n{_rudeness_title(label)}",
+                    fontsize="x-small",
+                )
+                axis.set(xlabel="Snapshot round", ylabel="Allocation (sum over voters)")
+                _set_snapshot_ticks(axis, rounds)
+                if candidate_ids:
+                    axis.legend(fontsize="xx-small", ncols=2)
+        figures.append((filename, figure))
+
+    for metric, metric_title, filename in (
+        (
+            "votes",
+            "vote totals (sums)",
+            "cumulative_vote_totals_before_through_by_rudeness.png",
+        ),
+        (
+            "credits",
+            "quadratic-credit-spend totals (sums)",
+            "cumulative_credit_totals_before_through_by_rudeness.png",
+        ),
+    ):
+        figure, axes = facet_figure(
+            f"Cumulative {metric_title}: before versus through snapshot"
+        )
+        for condition_index, condition in enumerate(facet_conditions):
+            for label_index, label in enumerate(facet_labels):
+                axis = axes[condition_index][label_index]
+                group = [
+                    row
+                    for row in rudeness
+                    if (row["arm"], row["regime"], row["rudeness_label"])
+                    == (*condition, label)
+                ]
+                for status, style, marker in (
+                    ("before", ":", "o"),
+                    ("through", "-", "s"),
+                ):
+                    rounds, totals = _sum_by_snapshot(
+                        group, f"sum_cumulative_{status}_{metric}"
+                    )
+                    axis.plot(
+                        rounds,
+                        totals,
+                        linestyle=style,
+                        marker=marker,
+                        color="#333333",
+                        label=status.title(),
+                    )
+                axis.set_title(
+                    f"{_condition_title(*condition)}\n{_rudeness_title(label)}",
+                    fontsize="x-small",
+                )
+                axis.set(xlabel="Snapshot round", ylabel="Total (sum)")
+                _set_snapshot_ticks(
+                    axis, _condition_snapshot_rounds(rudeness, condition)
+                )
+                if condition_index == 0 and label_index == 0:
+                    axis.legend(fontsize="x-small")
+        figures.append((filename, figure))
+
+    for field, metric_title, filename in (
+        (
+            "first_turn_length",
+            "first message",
+            "survivor_first_message_length_distribution_by_rudeness.png",
+        ),
+        (
+            "second_turn_length",
+            "second message",
+            "survivor_second_message_length_distribution_by_rudeness.png",
+        ),
+        (
+            "total_two_turn_length",
+            "first + second messages",
+            "survivor_total_message_length_distribution_by_rudeness.png",
+        ),
+    ):
+        figure, axes = facet_figure(f"Survivor {metric_title} length distributions")
+        figure.suptitle(
+            f"Survivor {metric_title} length distributions\n"
+            "Persisted-rudeness facets; snapshot changes reflect survivor composition, not message change.",
+            fontsize="medium",
+        )
+        for condition_index, condition in enumerate(facet_conditions):
+            for label_index, label in enumerate(facet_labels):
+                axis = axes[condition_index][label_index]
+                group = [
+                    row
+                    for row in survivor
+                    if (row["arm"], row["regime"], row["rudeness_label"])
+                    == (*condition, label)
+                ]
+                rounds = _condition_snapshot_rounds(survivor, condition)
+                distributions = [
+                    [
+                        _number(row[field])
+                        for row in group
+                        if _required_int(row, "snapshot_round") == round_index
+                        and row[field] is not None
+                    ]
+                    for round_index in rounds
+                ]
+                populated = [
+                    (index, values)
+                    for index, values in enumerate(distributions, start=1)
+                    if values
+                ]
+                if populated:
+                    axis.boxplot(
+                        [values for _index, values in populated],
+                        positions=[index for index, _values in populated],
+                        widths=0.55,
+                        manage_ticks=False,
+                    )
+                else:
+                    axis.text(
+                        0.5,
+                        0.5,
+                        "No non-null lengths",
+                        ha="center",
+                        va="center",
+                        transform=axis.transAxes,
+                    )
+                axis.set_title(
+                    f"{_condition_title(*condition)}\n{_rudeness_title(label)}",
+                    fontsize="x-small",
+                )
+                axis.set(
+                    xlabel="Snapshot round",
+                    ylabel="Unicode characters",
+                    xticks=range(1, len(rounds) + 1),
+                    xticklabels=rounds,
+                )
+        figures.append((filename, figure))
+
+    rudeness_preference_rows = aggregate_preference_agreement_by_rudeness(
+        rudeness_agreement
+    )
+    preference_conditions = tuple(
+        condition
+        for condition in _ordered_conditions(rudeness_agreement)
+        if condition[0] != "action-only"
+    )
+    preference_labels = _ordered_rudeness(rudeness_agreement)
+    figure, axes = plt.subplots(
+        len(preference_conditions),
+        len(preference_labels),
+        figsize=(
+            3.45 * len(preference_labels),
+            2.65 * len(preference_conditions) + 0.8,
+        ),
+        squeeze=False,
+        constrained_layout=True,
+    )
+    figure.suptitle(
+        "Stated-preference agreement within persisted rudeness (descriptive, not causal)",
+        fontsize="large",
+    )
+    for condition_index, condition in enumerate(preference_conditions):
+        for label_index, label in enumerate(preference_labels):
+            axis = axes[condition_index][label_index]
+            axis.axhline(0, color="#888888", linewidth=0.8, zorder=0)
+            group = [
+                row
+                for row in rudeness_preference_rows
+                if (row["arm"], row["regime"], row["rudeness_label"])
+                == (*condition, label)
+            ]
+            for measure, color, style, marker in (
+                ("signed_action", "#555555", "-", "o"),
+                ("signed_credit_spend", "#000000", "--", "s"),
+            ):
+                measure_rows = [row for row in group if row["measure"] == measure]
+                axis.plot(
+                    [_required_int(row, "snapshot_round") for row in measure_rows],
+                    [_number(row["mean_spearman_rho"]) for row in measure_rows],
+                    color=color,
+                    linestyle=style,
+                    marker=marker,
+                    label=measure.replace("_", " ").title(),
+                )
+                for row in measure_rows:
+                    axis.vlines(
+                        _required_int(row, "snapshot_round"),
+                        _number(row["min_spearman_rho"]),
+                        _number(row["max_spearman_rho"]),
+                        color=color,
+                        alpha=0.3,
+                        linewidth=1,
+                    )
+            axis.set_title(
+                f"{_condition_title(*condition)}\n{_rudeness_title(label)}",
+                fontsize="x-small",
+            )
+            axis.set(
+                xlabel="Snapshot round",
+                ylabel="Mean per-voter Spearman rho",
+                ylim=(-1, 1),
+            )
+            _set_snapshot_ticks(
+                axis, _condition_snapshot_rounds(rudeness_agreement, condition)
+            )
+            if condition_index == 0 and label_index == 0:
+                axis.legend(fontsize="xx-small")
+    figures.append(("stated_preference_agreement_by_rudeness.png", figure))
+    return tuple(figures)
+
+
+def render_snapshot_figures(out_dir: Path) -> tuple[Path, ...]:
+    """Render baseline and rudeness-faceted descriptive figures from snapshot tables."""
+    import matplotlib.pyplot as plt
+
     paths = []
-    for name, figure in figures:
+    for name, figure in build_snapshot_figures(out_dir):
         path = out_dir / name
-        figure.tight_layout()
-        figure.savefig(path, dpi=120, metadata={"Software": "quadratic-voting"})
+        figure.savefig(path, dpi=180, metadata={"Software": "quadratic-voting"})
         plt.close(figure)
         paths.append(path)
     return tuple(paths)

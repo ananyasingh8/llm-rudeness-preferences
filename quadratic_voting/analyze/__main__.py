@@ -14,6 +14,7 @@ from quadratic_voting.experiment.snapshots import (
     build_snapshot_tables,
     render_snapshot_figures,
 )
+from quadratic_voting.experiment.timeline_flow import render_timeline_html
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -34,11 +35,13 @@ def main(argv: list[str] | None = None) -> int:
         staging = Path(
             tempfile.mkdtemp(prefix=f".{args.out.name}.staging-", dir=args.out.parent)
         )
+        table_paths = build_snapshot_tables(
+            args.export_dir, staging, snapshot_count=args.snapshot_count
+        )
         paths = (
-            *build_snapshot_tables(
-                args.export_dir, staging, snapshot_count=args.snapshot_count
-            ),
+            *table_paths,
             *render_snapshot_figures(staging),
+            render_timeline_html(args.export_dir, staging),
         )
         os.replace(staging, args.out)
         paths = tuple(args.out / path.name for path in paths)

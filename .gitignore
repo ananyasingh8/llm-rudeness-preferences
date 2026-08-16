@@ -6,3 +6,4 @@ secrets_local.py
 .DS_Store
 /worktree/
 /quadratic_voting/data/
+/.claude/

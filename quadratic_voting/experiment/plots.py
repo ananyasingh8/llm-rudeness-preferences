@@ -17,6 +17,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import pyarrow.parquet as pq  # type: ignore[import-untyped]  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
 
+from quadratic_voting.experiment.timeline_flow import render_export_timeline  # noqa: E402
+
 
 PLOT_MANIFEST_VERSION = "qv-plot-manifest/v1"
 PLOT_STYLE = "qv-static/v1"
@@ -330,7 +332,7 @@ def build_plot_figures(
 
 
 def render_plots(export_dir: Path, out_dir: Path) -> tuple[Path, ...]:
-    """Write four PNGs and the versioned normalized semantic manifest."""
+    """Write four PNGs, the self-contained timeline, and the semantic manifest."""
     manifest = build_plot_manifest(export_dir)
     out_dir.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(
@@ -350,6 +352,7 @@ def render_plots(export_dir: Path, out_dir: Path) -> tuple[Path, ...]:
             figure.savefig(path, dpi=120, metadata={"Software": "quadratic-voting"})
             plt.close(figure)
             produced.append(path)
+        produced.append(render_export_timeline(export_dir, staging / "timeline.html"))
         for path in (manifest_path, *produced):
             with path.open("rb") as handle:
                 os.fsync(handle.fileno())

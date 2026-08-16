@@ -72,7 +72,9 @@ def register(subparsers: _SubParsersAction[Any]) -> None:
     export_parser.add_argument("--out", type=Path, required=True)
     export_parser.set_defaults(handler=_export, mutates_db=True)
 
-    plot_parser = subparsers.add_parser("plot", help="render static plots from Parquet")
+    plot_parser = subparsers.add_parser(
+        "plot", help="render static plots and the timeline.html from Parquet"
+    )
     plot_parser.add_argument("--export-dir", type=Path, required=True)
     plot_parser.add_argument("--out", type=Path, required=True)
     plot_parser.set_defaults(handler=_plot)

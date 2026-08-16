@@ -32,7 +32,8 @@ The command performs the complete dependency chain:
 7. Retrieves the exact pinned Gemma artifact if needed.
 8. Runs all six conditions with three voters and master seed `20260815`.
 9. Verifies every persisted round outcome.
-10. Exports Parquet tables and renders plots.
+10. Exports Parquet tables and renders plots, including a self-contained
+    `timeline.html` in the `plots/` directory.
 
 Artifacts are written under `quadratic_voting/data/default-pilot/`. The command
 writes `manifest.json` before model execution. If execution is interrupted,
@@ -550,7 +551,9 @@ uv run python -m quadratic_voting.experiment.cli \
   --out "$QV_EXPORT"
 ```
 
-Render static plots from the exported Parquet files:
+Render static plots and the self-contained `timeline.html` from the exported
+Parquet files (the interactive timeline is written into the same `plots/`
+directory):
 
 ```console
 uv run python -m quadratic_voting.experiment.cli \

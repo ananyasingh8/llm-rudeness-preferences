@@ -95,6 +95,14 @@ uv run python -m quadratic_voting.experiment.cli plot --export-dir exports/MATCH
 uv run python -m quadratic_voting.analyze --input-dir exports/MATCHED --out analytics/MATCHED
 ```
 
+The `plot` command writes the four static PNGs, the semantic
+`plot-manifest.json`, and a self-contained `timeline.html` into the `plots/`
+directory. Open `plots/MATCHED/timeline.html` directly in a browser to review the
+full four-message candidate conversations, per-round allocations, and outcomes;
+it makes no network, model, or provider calls. The `analyze` command additionally
+produces the snapshot tables and rudeness-faceted figures alongside its own
+`timeline.html`.
+
 ## No-GPU snapshot analytics
 
 `quadratic_voting.analyze` only reads an existing Parquet export; it does not

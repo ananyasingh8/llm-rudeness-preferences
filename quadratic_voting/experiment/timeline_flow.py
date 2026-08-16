@@ -45,19 +45,48 @@ D.runs.forEach((current,index)=>run.add(new Option(current.regime+' — '+curren
 </script>"""
 
 
-def render_timeline_html(export_dir: Path, out_dir: Path) -> Path:
-    """Write one no-network timeline using textContent for all persisted text."""
-    payload = build_timeline_payload(
-        export_dir, _read(out_dir, "snapshot_candidate_labels")
-    )
+def _write_timeline_document(payload: dict[str, object], path: Path) -> Path:
+    """Serialize the payload and write one no-network self-contained document."""
     safe_payload = (
         json.dumps(payload, sort_keys=True, ensure_ascii=False)
         .replace("<", "\\u003c")
         .replace(">", "\\u003e")
         .replace("&", "\\u0026")
     )
-    path = out_dir / "timeline.html"
     path.write_text(
         _DOCUMENT_PREFIX + safe_payload + _DOCUMENT_SUFFIX, encoding="utf-8"
     )
     return path
+
+
+def export_candidate_labels(export_dir: Path) -> list[dict[str, object]]:
+    """Derive deterministic C1..Cn labels from the export's candidate set.
+
+    This matches the analyze snapshot labeling (sorted candidate IDs) so the
+    plots-directory timeline and the full analyze dashboard agree.
+    """
+    candidate_ids = sorted(
+        {str(row["candidate_id"]) for row in _read(export_dir, "candidate_analysis")}
+    )
+    return [
+        {"candidate_id": candidate_id, "candidate_label": f"C{index}"}
+        for index, candidate_id in enumerate(candidate_ids, start=1)
+    ]
+
+
+def render_timeline_html(export_dir: Path, out_dir: Path) -> Path:
+    """Write one no-network timeline using textContent for all persisted text."""
+    payload = build_timeline_payload(
+        export_dir, _read(out_dir, "snapshot_candidate_labels")
+    )
+    return _write_timeline_document(payload, out_dir / "timeline.html")
+
+
+def render_export_timeline(export_dir: Path, out_path: Path) -> Path:
+    """Render the timeline directly from an export to an explicit file path.
+
+    Labels are derived from the export itself, so no snapshot tables need to be
+    materialized. Used to include the timeline alongside static plots.
+    """
+    payload = build_timeline_payload(export_dir, export_candidate_labels(export_dir))
+    return _write_timeline_document(payload, out_path)

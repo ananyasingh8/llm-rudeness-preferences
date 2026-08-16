@@ -32,6 +32,7 @@ EXPECTED = {
     "candidate_survival.png",
     "run_quality.png",
     "round_trajectories.png",
+    "timeline.html",
 }
 
 
@@ -42,6 +43,9 @@ class FixturePlotTests(AnalysisFixture):
         paths = render_plots(export_dir, self.root / "plots")
         self.assertEqual({path.name for path in paths}, EXPECTED)
         self.assertTrue(all(path.stat().st_size > 0 for path in paths))
+        timeline = (self.root / "plots" / "timeline.html").read_text(encoding="utf-8")
+        self.assertIn("Quadratic-voting allocation flows", timeline)
+        self.assertIn("Conversation actually shown in this pilot", timeline)
         manifest_path = self.root / "plots" / "plot-manifest.json"
         self.assertTrue(manifest_path.exists())
         self.assertEqual(

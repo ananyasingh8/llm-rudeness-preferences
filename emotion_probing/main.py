@@ -8,7 +8,7 @@ similarity of that activation against pre-extracted emotion vectors. Comparing
 scores between rude/abusive and normal inputs shows which emotion
 representations mistreatment activates.
 
-Three registered experiment configurations (see EXPERIMENTS below):
+Four registered experiment configurations (see EXPERIMENTS below):
 
 - **bailbench-2b**: google/gemma-2-2b-it scored against EmotionScope's 20
   emotion vectors (layer 22) on 1,630 synthetic normal/rude prompt pairs.
@@ -17,6 +17,12 @@ Three registered experiment configurations (see EXPERIMENTS below):
   BitsAndBytes FP4 and scored against
   the 171 gemotions emotion vectors (layer 40) on 4,185 real, human-annotated
   user-bot conversation snippets from ConvAbuse.
+- **convabuse-31b-base**: the base (non-instruction-tuned) google/gemma-4-31B,
+  BitsAndBytes FP4, scored against our own extracted vectors
+  (emotion_probing.extract) on the same ConvAbuse data. Prompts render as a
+  plain "User:/Assistant:" transcript because base models have no chat
+  template. Blocked with instructions until BASE_PROBE_LAYER and
+  BASE_VECTORS_RUN are pinned from the extraction sweep's layer_quality.json.
 
 Emotion vectors are model-specific: each configuration pairs a model route
 from the shared llm_runtime registry with vectors extracted from that same
@@ -89,11 +95,13 @@ class ExperimentId(StrEnum):
     BAILBENCH_2B = "bailbench-2b"
     CONVABUSE_31B = "convabuse-31b"
     CONVABUSE_31B_LOCAL_QUANT = "convabuse-31b-local-quant"
+    CONVABUSE_31B_BASE = "convabuse-31b-base"
 
 
 class VectorSource(StrEnum):
     EMOTIONSCOPE = "emotionscope"
     GEMOTIONS = "gemotions"
+    EXTRACTED_BASE = "extracted-base"
 
 
 class DatasetId(StrEnum):
@@ -115,7 +123,20 @@ class ExperimentConfig:
     token_limit: int
     batch_size: int = 1
     use_cache: bool = False
+    # "chat" renders via the tokenizer's chat template; "transcript" renders a
+    # plain "User: ...\nAssistant:" transcript for models with no chat
+    # template (base models), ending at the ":" measurement position.
+    prompt_style: str = "chat"
 
+
+# --- Base-model probing: pin BOTH constants after the extraction sweep. ------
+# Run the sweep (`uv run python -m emotion_probing.extract run`, see
+# extract_vectors.md), read layer_quality.json, pick the winning layer
+# (prefer a stable plateau over a lone spike), then set the layer and the
+# extraction run folder name here. Until both are set, selecting the
+# convabuse-31b-base experiment fails with instructions; download still works.
+BASE_PROBE_LAYER: int | None = None  # e.g. 40
+BASE_VECTORS_RUN: str | None = None  # e.g. "2026-08-16_120000_extract-gemma4-31b-base"
 
 # --- Experiment constants: edit these to change the model setups. ------------
 EXPERIMENTS: dict[ExperimentId, ExperimentConfig] = {
@@ -148,6 +169,17 @@ EXPERIMENTS: dict[ExperimentId, ExperimentConfig] = {
         dataset=DatasetId.CONVABUSE,
         expected_width=5_376,
         token_limit=512,
+    ),
+    ExperimentId.CONVABUSE_31B_BASE: ExperimentConfig(
+        name=ExperimentId.CONVABUSE_31B_BASE,
+        model_id=ModelId.GEMMA_4_31B,
+        quantization_id=QuantizationId.BITSANDBYTES_FP4,
+        probe_layer=BASE_PROBE_LAYER if BASE_PROBE_LAYER is not None else -1,
+        vectors=VectorSource.EXTRACTED_BASE,
+        dataset=DatasetId.CONVABUSE,
+        expected_width=5_376,
+        token_limit=512,
+        prompt_style="transcript",
     ),
 }
 DEFAULT_EXPERIMENT = ExperimentId.CONVABUSE_31B
@@ -238,6 +270,57 @@ def _load_gemotions_vectors(probe_layer: int) -> tuple[list[str], torch.Tensor]:
     return names, matrix
 
 
+def _extracted_base_vectors_path() -> Path:
+    """Resolve the pinned base-model vectors file, or explain how to pin it."""
+    if BASE_PROBE_LAYER is None or BASE_VECTORS_RUN is None:
+        raise ProbeError(
+            "The convabuse-31b-base experiment is not pinned yet. Run the "
+            "extraction sweep (`uv run python -m emotion_probing.extract run`, "
+            "see extract_vectors.md), pick the winning layer from "
+            "layer_quality.json (prefer a plateau over a lone spike), then set "
+            "BASE_PROBE_LAYER and BASE_VECTORS_RUN at the top of "
+            "emotion_probing/main.py."
+        )
+    return (
+        RESULTS_DIR
+        / BASE_VECTORS_RUN
+        / f"gemma4-31b-base_emotion_vectors_layer{BASE_PROBE_LAYER}.npz"
+    )
+
+
+def _load_extracted_base_vectors(
+    route: LocalTransformersRoute,
+) -> tuple[list[str], torch.Tensor]:
+    path = _extracted_base_vectors_path()
+    if not path.exists():
+        raise ProbeError(
+            f"Emotion vectors file not found: {path}. Check BASE_VECTORS_RUN "
+            "and BASE_PROBE_LAYER against the extraction run's actual outputs."
+        )
+    run_info_file = path.parent / "run_info.json"
+    if run_info_file.exists():
+        info = json.loads(run_info_file.read_text(encoding="utf-8"))
+        if info.get("repository") != route.artifact.repository:
+            raise ProbeError(
+                "The pinned vectors were extracted from "
+                f"{info.get('repository')} but the configured route loads "
+                f"{route.artifact.repository}. Emotion vectors are "
+                "model-specific; fix the pinning."
+            )
+        if BASE_PROBE_LAYER not in info.get("probe_layers", []):
+            raise ProbeError(
+                f"BASE_PROBE_LAYER={BASE_PROBE_LAYER} was not part of the "
+                "pinned extraction run's probe_layers; fix the pinning."
+            )
+    saved = np.load(path)
+    names = list(saved.files)
+    matrix = F.normalize(
+        torch.stack([torch.from_numpy(saved[name]).float() for name in names]),
+        dim=1,
+    )
+    return names, matrix
+
+
 def load_vectors(
     config: ExperimentConfig, route: LocalTransformersRoute
 ) -> tuple[list[str], torch.Tensor]:
@@ -246,18 +329,27 @@ def load_vectors(
         return _load_emotionscope_vectors(route, config.probe_layer)
     if config.vectors is VectorSource.GEMOTIONS:
         return _load_gemotions_vectors(config.probe_layer)
+    if config.vectors is VectorSource.EXTRACTED_BASE:
+        return _load_extracted_base_vectors(route)
     raise ProbeError(f"Unknown vectors source {config.vectors!r}.")
 
 
 def load_clusters(config: ExperimentConfig) -> dict | None:
     """Load the vendored gemotions cluster analysis for the configured layer."""
-    if config.vectors is not VectorSource.GEMOTIONS:
+    if config.vectors is VectorSource.EMOTIONSCOPE:
         return None
     if not GEMOTIONS_ANALYSIS_FILE.exists():
         raise ProbeError(f"Cluster analysis file not found: {GEMOTIONS_ANALYSIS_FILE}.")
     with GEMOTIONS_ANALYSIS_FILE.open(encoding="utf-8") as handle:
         analysis = json.load(handle)
-    layer = str(config.probe_layer)
+    # Base-model runs reuse the IT layer-40 clustering purely as an
+    # emotion-name grouping aid for analysis (the analysis file only has
+    # entries for the IT model's swept layers).
+    layer = (
+        str(config.probe_layer)
+        if config.vectors is VectorSource.GEMOTIONS
+        else "40"
+    )
     if layer not in analysis:
         raise ProbeError(f"The gemotions analysis file has no layer {layer} entry.")
     return {"clusters": analysis[layer]["clusters"]}
@@ -280,6 +372,7 @@ def emotion_scores(
     *,
     expected_width: int,
     token_limit: int,
+    prompt_style: str = "chat",
 ) -> tuple[list[float], int]:
     """Run one forward pass and score the response-start activation.
 
@@ -288,7 +381,9 @@ def emotion_scores(
     stream after block `probe_layer` is hidden_states[probe_layer + 1] — the
     same convention both vector sources used during extraction.
     """
-    inputs, token_count = _tokenize_probe_prompt(runtime, messages, token_limit)
+    inputs, token_count = _tokenize_probe_prompt(
+        runtime, messages, token_limit, prompt_style=prompt_style
+    )
     return _score_prepared_prompt(
         runtime,
         inputs,
@@ -299,26 +394,49 @@ def emotion_scores(
     )
 
 
+def _render_transcript(messages: list[dict[str, str]]) -> str:
+    """Plain-text transcript for models with no chat template (base models).
+
+    Ends with "Assistant:" so the last prompt token is the ":" after
+    "Assistant" — literally the measurement position from Anthropic's paper.
+    """
+    speaker = {"user": "User", "assistant": "Assistant"}
+    lines = [
+        f"{speaker[message['role']]}: {message['content']}"
+        for message in messages
+    ]
+    return "\n".join(lines) + "\nAssistant:"
+
+
 def _tokenize_probe_prompt(
     runtime: LocalActivationRuntime,
     messages: list[dict[str, str]],
     token_limit: int,
     *,
+    prompt_style: str = "chat",
     move_to_model: bool = True,
 ) -> tuple[dict[str, torch.Tensor], int]:
     """Tokenize and enforce batch/token bounds before any model call."""
     try:
-        encoded = cast(
-            BatchEncoding,
-            runtime.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                return_dict=True,
-                return_tensors="pt",
-                add_generation_prompt=True,
-                truncation=False,
-            ),
-        )
+        if prompt_style == "transcript":
+            encoded = cast(
+                BatchEncoding,
+                runtime.tokenizer(
+                    _render_transcript(messages), return_tensors="pt"
+                ),
+            )
+        else:
+            encoded = cast(
+                BatchEncoding,
+                runtime.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=True,
+                    return_dict=True,
+                    return_tensors="pt",
+                    add_generation_prompt=True,
+                    truncation=False,
+                ),
+            )
         inputs = (
             encoded.to(cast(torch.device, getattr(runtime.model, "device")))
             if move_to_model
@@ -369,6 +487,7 @@ def validate_prompt_bounds_before_iteration(
     runtime: LocalActivationRuntime,
     prompts: Sequence[list[dict[str, str]]],
     token_limit: int,
+    prompt_style: str = "chat",
 ) -> None:
     """Validate all prompts on CPU before any experiment model forward."""
     for index, messages in enumerate(prompts):
@@ -377,6 +496,7 @@ def validate_prompt_bounds_before_iteration(
                 runtime,
                 messages,
                 token_limit,
+                prompt_style=prompt_style,
                 move_to_model=False,
             )
         except ProbeError as error:
@@ -994,6 +1114,9 @@ def build_input_fingerprints(
             / f"emotion_vectors_layer{config.probe_layer}.npz"
         )
         cluster_path: Path | None = GEMOTIONS_ANALYSIS_FILE
+    elif config.vectors is VectorSource.EXTRACTED_BASE:
+        vector_path = _extracted_base_vectors_path()
+        cluster_path = GEMOTIONS_ANALYSIS_FILE
     else:
         vector_path = EMOTIONSCOPE_VECTORS_FILE
         cluster_path = None
@@ -1081,11 +1204,14 @@ def build_run_provenance(
         "token_limit": config.token_limit,
         "batch_size": config.batch_size,
         "use_cache": config.use_cache,
+        "prompt_style": config.prompt_style,
         "inference_mode": True,
         "vectors": config.vectors.value,
         "vectors_revision": (
             GEMOTIONS_SOURCE_REVISION
             if config.vectors is VectorSource.GEMOTIONS
+            else BASE_VECTORS_RUN
+            if config.vectors is VectorSource.EXTRACTED_BASE
             else None
         ),
         "limit": limit,
@@ -1213,6 +1339,7 @@ def run_probe(
         runtime,
         [task["messages"] for task in tasks],
         config.token_limit,
+        prompt_style=config.prompt_style,
     )
     input_fingerprints = build_input_fingerprints(
         config, key_columns, metadata_columns, tasks
@@ -1259,6 +1386,7 @@ def run_probe(
                             config.probe_layer,
                             expected_width=config.expected_width,
                             token_limit=config.token_limit,
+                            prompt_style=config.prompt_style,
                         )
                         row["n_tokens"] = n_tokens
                         row |= dict(zip([f"score_{name}" for name in names], scores))

@@ -19,6 +19,7 @@ from llm_runtime.types import (
 TransformersModelId: TypeAlias = Literal[
     ModelId.GEMMA_4_E2B_IT,
     ModelId.GEMMA_4_31B_IT,
+    ModelId.GEMMA_4_31B,
     ModelId.GEMMA_2_2B_IT,
 ]
 OpenRouterModelId: TypeAlias = Literal[ModelId.DOLPHIN_MISTRAL_24B_VENICE]
@@ -149,6 +150,27 @@ _ROUTES: Mapping[RouteKey, ModelRoute] = MappingProxyType(
             artifact=HuggingFaceArtifact(
                 repository="google/gemma-4-31B-it",
                 revision="842da3794eaa0b77d5f08bae87a17459d91ff475",
+            ),
+            loader=LocalLoaderKind.BITSANDBYTES_4BIT,
+            context_window=131_072,
+            bitsandbytes=BitsAndBytes4BitSettings(
+                load_in_4bit=True,
+                quant_type=FourBitQuantType.FP4,
+                compute_dtype=TorchDTypeId.BFLOAT16,
+                quant_storage=TorchDTypeId.UINT8,
+                use_double_quant=False,
+            ),
+        ),
+        (
+            ModelId.GEMMA_4_31B,
+            ProviderId.LOCAL,
+            QuantizationId.BITSANDBYTES_FP4,
+        ): LocalTransformersRoute(
+            model_id=ModelId.GEMMA_4_31B,
+            quantization_id=QuantizationId.BITSANDBYTES_FP4,
+            artifact=HuggingFaceArtifact(
+                repository="google/gemma-4-31B",
+                revision="5bbc2fb1c1b2c611d06e3d9f23c170ba21659d89",
             ),
             loader=LocalLoaderKind.BITSANDBYTES_4BIT,
             context_window=131_072,

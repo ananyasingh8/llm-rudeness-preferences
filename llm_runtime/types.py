@@ -15,6 +15,7 @@ MAX_RETRY_DELAY_SECONDS = 30.0
 class ModelId(StrEnum):
     GEMMA_4_E2B_IT = "gemma-4-e2b-it"
     GEMMA_4_31B_IT = "gemma-4-31b-it"
+    GEMMA_4_31B = "gemma-4-31b"
     GEMMA_2_2B_IT = "gemma-2-2b-it"
     DOLPHIN_MISTRAL_24B_VENICE = "dolphin-mistral-24b-venice"
 

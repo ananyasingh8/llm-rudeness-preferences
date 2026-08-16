@@ -180,10 +180,44 @@ without torch/transformers — useful for quick local checks.
 8. EmotionScope's `token_position="last_content"` config name is a misnomer (it actually
    probes the last templated token — same position we use). Don't be confused reading it.
 
+### Base-model vector extraction (`extract.py`)
+
+`python -m emotion_probing.extract download|run` — re-extracts emotion vectors from the
+**base** `google/gemma-4-31B` (new registry route: base repo @ `5bbc2fb1`, same
+BitsAndBytes FP4 recipe as the IT route). Method mirrors the vendored
+`gemotions/extract_vectors.py` (raw text, no chat template; mean-pool block outputs from
+START_TOKEN=50; emotion mean − global mean; neutral-SVD denoise at 50% variance) but scoped:
+20 hardcoded TARGET_EMOTIONS (top risers/fallers by shift_band_avg from the
+2026-08-15_052621 run, provenance in the constant's comment) × 100 stories, plus 10 stories
+for each of the other 151 emotions **only to compute a faithful 171-emotion global mean**,
+plus 300 neutral dialogues. Stories come from the non-vendored `stories.db` (433 MB),
+fetched by `download` via hf_hub_download at the pinned gemotions revision. Seeded sampling
+(not first-N — the corpus is topic-ordered). Resumable at per-emotion granularity; `--limit`
+and PROBE_LAYERS are part of run identity.
+
+**Layer sweep**: PROBE_LAYERS = range(20, 60) — every forward pass computes all layers
+anyway, so the sweep is free; hooks mean-pool on-GPU and ship only pooled vectors to CPU.
+One `gemma4-31b-base_emotion_vectors_layer<N>.npz` per layer (base-prefixed names so they
+can never be confused with the vendored IT files), plus `layer_quality.json` scoring each
+layer (riser-vs-faller valence separation, synonym coherence, IT-cosine where a vendored IT
+file exists — currently only layer 40). The right layer for the base model is **picked from
+this scorecard after the run** (plateau over lone spike), not assumed. Runbook:
+`extract_vectors.md`. Do not compare base-model vectors against IT-model activations or
+vice versa — vectors only make sense inside the model they came from.
+
 ## Status & future work
 
 - Done: two-experiment runner, ConvAbuse collapse, per-run folders, cluster-based analysis
-  and charts, registry routes for all three models, vendored gemotions subset.
+  and charts, registry routes for all three models, vendored gemotions subset,
+  base-model vector extraction (`extract.py`, not yet run on real hardware).
+- Pre-wired: the `convabuse-31b-base` probing experiment (base 31B + our extracted
+  vectors + ConvAbuse). Two placeholder constants near the top of `main.py`
+  (`BASE_PROBE_LAYER`, `BASE_VECTORS_RUN`) stay None until the extraction sweep runs and a
+  layer is picked from layer_quality.json; selecting the experiment before pinning fails
+  with instructions (download works). Base models have no chat template, so this config
+  uses `prompt_style="transcript"` — a plain "User:/Assistant:" rendering ending at the
+  ":" after "Assistant" (literally the paper's measurement position). Its analysis reuses
+  the IT layer-40 clustering as a naming aid regardless of the pinned layer.
 - Not run yet on real hardware: 24 GB RTX 4090 fit and exact historical equivalence remain
   unmeasured. Run the documented one-example smoke only with separate authorization.
 - Future: steering (add emotion vectors scaled by observed shifts, re-run bail under

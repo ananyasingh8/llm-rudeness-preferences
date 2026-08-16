@@ -258,6 +258,7 @@ submodule, no git-lfs, nothing extra to download.
 main.py          # runner: download | run (experiment configs at the top)
 datasets.py      # dataset loaders + the ConvAbuse annotation collapse
 analyze/         # per-run analysis package (common, maps, convabuse, bailbench)
+extract.py       # base-model vector extraction (see extract_vectors.md)
 data/            # ConvAbuseEMNLPfull.csv
 results/         # one folder per run (never overwritten)
 EmotionScope/    # vendored 2B vector-extraction repo (vectors .pt used)

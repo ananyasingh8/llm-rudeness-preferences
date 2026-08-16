@@ -154,6 +154,29 @@ class RegistryTests(unittest.TestCase):
         ):
             resolve_route(ModelId.GEMMA_2_2B_IT, ProviderId.OPENROUTER, None)
 
+    def test_gemma_4_31b_base_fp4_extraction_route(self) -> None:
+        route = cast(
+            LocalTransformersRoute,
+            resolve_route(
+                ModelId.GEMMA_4_31B,
+                ProviderId.LOCAL,
+                QuantizationId.BITSANDBYTES_FP4,
+                required={Capability.LOCAL_ACTIVATIONS},
+            ),
+        )
+        self.assertIsInstance(route, LocalTransformersRoute)
+        self.assertEqual(route.artifact.repository, "google/gemma-4-31B")
+        self.assertEqual(
+            route.artifact.revision, "5bbc2fb1c1b2c611d06e3d9f23c170ba21659d89"
+        )
+        self.assertEqual(route.availability, RouteAvailability.ENABLED)
+        self.assertIsNotNone(route.bitsandbytes)
+
+        with self.assertRaisesRegex(
+            ModelRouteError, "not registered.*Supported routes.*Select"
+        ):
+            resolve_route(ModelId.GEMMA_4_31B, ProviderId.LOCAL, QuantizationId.BF16)
+
 
 if __name__ == "__main__":
     unittest.main()

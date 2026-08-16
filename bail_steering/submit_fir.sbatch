@@ -121,6 +121,19 @@ echo "condition=${CONDITION} seed=${SEED} batch_size=${BATCH_SIZE}"
 echo "prompt_max_tokens=${PROMPT_MAX_TOKENS} tool_max_tokens=${TOOL_MAX_TOKENS} phase=both"
 echo "cache=${MODEL_CACHE_DIR}"
 echo "================================="
+# GPU-assignment diagnostic: prints exactly which physical GPU(s) Slurm gave
+# this task. If sibling array tasks print the SAME GPU UUID from `nvidia-smi
+# -L`, they are co-located on one card and will fight over its 80 GB (the
+# cause of the earlier array-wide OOM). Distinct UUIDs per task == isolated.
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+echo "SLURM_JOB_GPUS=${SLURM_JOB_GPUS:-unset} SLURM_GPUS_ON_NODE=${SLURM_GPUS_ON_NODE:-unset} SLURM_STEP_GPUS=${SLURM_STEP_GPUS:-unset}"
+nvidia-smi -L || true
+nvidia-smi --query-gpu=index,uuid,memory.total,memory.used --format=csv,noheader || true
+# What Slurm believes it allocated to this task (compare across concurrent
+# tasks): if two tasks show different GRES here but nvidia-smi -L lists the
+# same physical UUID, that is a real isolation bug -> Alliance support ticket.
+scontrol show job -d "${SLURM_JOB_ID:-0}" 2>/dev/null | grep -iE "gres|tres_per|nodelist" || true
+echo "================================="
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 .venv/bin/python -c \
     'import torch; assert torch.cuda.is_available(), "PyTorch cannot access the allocated GPU"; print(f"torch={torch.__version__} cuda={torch.version.cuda} gpu={torch.cuda.get_device_name(0)}")'

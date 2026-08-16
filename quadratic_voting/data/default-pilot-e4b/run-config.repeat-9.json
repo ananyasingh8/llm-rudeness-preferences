@@ -1,0 +1,117 @@
+{
+  "action_format": "json-with-rationale/v1",
+  "arms": [
+    "action-only"
+  ],
+  "ballot_retry": {
+    "max_corrections": 3
+  },
+  "canonical_json_version": "qv-canonical-json/v1",
+  "credit_budget": 100,
+  "execution_class": "pilot",
+  "master_seed": 7903611685213678653,
+  "presentation_policy": "setup-once-ids-later/v1",
+  "prompt_encoding_version": "qv-prompt/v1",
+  "prompts": {
+    "ballot": {
+      "expected_sha256": "7663bf6e9ac0a62386543ea6731dd65c051a0968cff4e4a59f2577e371c040e8",
+      "name": "ballot",
+      "template_id": "01M04WCCY3FT5J8KXSEK8X5T30",
+      "version": "v5"
+    },
+    "correction": {
+      "expected_sha256": "1cad8370f75dbc47ffcc4b1d9e5a3991248a8ea20e8fe11d63d495cc5a25030f",
+      "name": "correction",
+      "template_id": "01M04WCCYA3E9H1ENVB7WK6348",
+      "version": "v5"
+    },
+    "final_result": {
+      "expected_sha256": "6e8e7776287780405d82bd8667e46f83509cfa573fd3b78d3d5d5c2f3b74ecef",
+      "name": "final-result",
+      "template_id": "01M04WCCYPXP6WEW618D6F6PC7",
+      "version": "v5"
+    },
+    "result": {
+      "expected_sha256": "928f51ec324ba6c0888a870534b8ab621243b035e7e9df21bf4b28e4855c957a",
+      "name": "result",
+      "template_id": "01M04WCCYG7EW1F56CSWT5DXTY",
+      "version": "v5"
+    },
+    "review_sha256": "99bf68d349a47c86784d8ba7006f4e4f066962ee4d7f83529024aaaf36590458",
+    "review_version": "default-pilot-review/v2",
+    "reviewed": true,
+    "setup": {
+      "expected_sha256": "3724cbf93998e881f10b9dd73a2de37d39cd55442dbdd624f449e13bdfa1a328",
+      "name": "setup",
+      "template_id": "01M04WCCXHGDHD2KZD16X448QR",
+      "version": "v5"
+    },
+    "statement": {
+      "expected_sha256": "dec87b81f1fd37d00a9029c0c8cd4e8d5afba91632ee8be6931f40f41ad04caa",
+      "name": "statement",
+      "template_id": "01M04WCCXXJD75PS1SFSM69GKC",
+      "version": "v5"
+    }
+  },
+  "regimes": [
+    "support",
+    "opposition"
+  ],
+  "route": {
+    "artifact_repository": "google/gemma-4-E4B-it",
+    "artifact_revision": "ee0ef6023621cff504d758262d4e04895a5af4a2",
+    "dtype": "bitsandbytes-fp4",
+    "model_id": "gemma-4-e4b-it",
+    "provider_id": "local",
+    "quantization_id": "bitsandbytes-fp4",
+    "runtime_id": "transformers",
+    "tokenizer_repository": "google/gemma-4-E4B-it",
+    "tokenizer_revision": "ee0ef6023621cff504d758262d4e04895a5af4a2"
+  },
+  "runtime_retry": {
+    "initial_backoff_ms": 1000,
+    "max_backoff_ms": 2000,
+    "max_failures_per_execution": 3,
+    "multiplier": 2.0
+  },
+  "sample": {
+    "artifact_path": "/home/minttea/codebases/llm-rudeness-preferences/epic-12--complete-conversation-context/quadratic_voting/data/default-pilot-e4b/sample.json",
+    "expected_sha256": "caedccb8a61802773374525fa4bad1d72430e17073b2662ae6a5e5be9e172e15",
+    "label_policy": {
+      "expected_sha256": "4643cd3510f84aea4ec8d70cb8e1362caa6c795a793a26701a0af271f61e9fc1",
+      "label_policy_id": "01M04WCCA610PF0RASTVQXN4HR",
+      "name": "convabuse-rudeness",
+      "review_sha256": "99bf68d349a47c86784d8ba7006f4e4f066962ee4d7f83529024aaaf36590458",
+      "review_version": "default-pilot-review/v2",
+      "reviewed": true,
+      "version": "majority-severity-negative-complete-context/v3"
+    },
+    "presentation_template": {
+      "expected_sha256": "0a726a8c05986aa2760081528cf41a8bfba481108d50afcb5dc0bb95b14053fd",
+      "name": "candidate-card",
+      "template_id": "01M04WCCPW36JQEYQVYKJ1N9G0",
+      "version": "v3"
+    },
+    "release": {
+      "dataset_name": "ConvAbuse",
+      "expected_sha256": "c054ed30375651cd234930eada705fee6fcad79f86bdca45c1e557284b6b1af4",
+      "release_id": "01M04WCCA6DPYYKF24A978V61V",
+      "version": "convabuse-emnlp-full/default-v3"
+    },
+    "sample_id": "01M04WCD4GGTC2J7RFKYS66J5G"
+  },
+  "sampler_policy": "level-stratified/v1",
+  "sampling": {
+    "max_new_tokens": 2048,
+    "temperature": 0.7,
+    "top_k": 10,
+    "top_p": 0.9
+  },
+  "schema_version": "qv-run-config/v1",
+  "seed_version": "qv-seed/v1",
+  "statement_retry": {
+    "max_corrections": 3
+  },
+  "tie_policy": "uniform-seeded/v1",
+  "voter_count": 3
+}

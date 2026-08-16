@@ -18,6 +18,12 @@ from quadratic_voting.experiment.snapshots import (
 from quadratic_voting.experiment.timeline_flow import render_timeline_html
 
 
+def _resolve_out(input_dir: Path, out: Path | None, *, aggregate: bool) -> Path:
+    if out is not None:
+        return out
+    return input_dir / ("aggregate-dashboard" if aggregate else "analysis")
+
+
 def _confirm_replacement(out: Path, *, overwrite: bool) -> None:
     if not out.exists() or overwrite:
         return
@@ -68,7 +74,15 @@ def main(argv: list[str] | None = None) -> int:
         description="Analyze a quadratic-voting Parquet export without a model or GPU."
     )
     parser.add_argument("--input-dir", type=Path, required=True)
-    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help=(
+            "output directory; defaults to <input-dir>/aggregate-dashboard with "
+            "--aggregate, else <input-dir>/analysis"
+        ),
+    )
     parser.add_argument(
         "--overwrite",
         action="store_true",
@@ -85,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+    args.out = _resolve_out(args.input_dir, args.out, aggregate=args.aggregate)
     try:
         _confirm_replacement(args.out, overwrite=args.overwrite)
         if args.aggregate:

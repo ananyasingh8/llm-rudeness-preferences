@@ -94,8 +94,31 @@ COEFFICIENT = 0.1  # fraction of residual-stream norm (Anthropic's units)
 #    from its analysis. Risers get +COEFFICIENT, fallers get -COEFFICIENT.
 STEER_LAYER: int | None = 13
 STEER_VECTORS_RUN: str | None = "2026-08-16_000402_extract-gemma4-e4b-it"
-STEER_RISERS: tuple[str, ...] | None = None
-STEER_FALLERS: tuple[str, ...] | None = None
+# Top-10 movers by shift_band_avg in results/2026-08-16_002652_convabuse-e4b.
+STEER_RISERS: tuple[str, ...] | None = (
+    "enraged",
+    "spiteful",
+    "vindictive",
+    "outraged",
+    "angry",
+    "insulted",
+    "hostile",
+    "defiant",
+    "sullen",
+    "hateful",
+)
+STEER_FALLERS: tuple[str, ...] | None = (
+    "content",
+    "refreshed",
+    "elated",
+    "serene",
+    "at ease",
+    "hope",
+    "peaceful",
+    "dependent",
+    "happy",
+    "nostalgic",
+)
 
 BASELINE_CONDITION = "baseline"
 VECTORS_PREFIX = "gemma4-e4b-it"  # npz prefix written by the extraction

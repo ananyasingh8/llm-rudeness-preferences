@@ -43,6 +43,8 @@ class ExportStore(Protocol):
 
     def candidate_presentation_rows(self) -> tuple[dict[str, object], ...]: ...
 
+    def candidate_source_turn_rows(self) -> tuple[dict[str, object], ...]: ...
+
     def voter_permutation_rows(self) -> tuple[dict[str, object], ...]: ...
 
     def experiment_config_rows(self) -> tuple[dict[str, object], ...]: ...
@@ -380,6 +382,9 @@ _CANDIDATE_PRESENTATION_SCHEMA = _schema(
         ("rendered_text", _S),
         ("rendered_sha256", _S),
     )
+)
+_CANDIDATE_SOURCE_TURN_SCHEMA = _schema(
+    (("candidate_id", _S), ("turn_index", _I), ("role", _S), ("text", _S))
 )
 _VOTER_PERMUTATION_SCHEMA = _schema(
     (
@@ -1249,6 +1254,11 @@ def export_parquet(
         for row in store.candidate_presentation_rows()
         if str(row["candidate_id"]) in candidate_ids
     )
+    source_turns = tuple(
+        row
+        for row in store.candidate_source_turn_rows()
+        if str(row["candidate_id"]) in candidate_ids
+    )
     candidates = tuple(
         row for row in candidates if str(row["candidate_id"]) in candidate_ids
     )
@@ -1301,6 +1311,7 @@ def export_parquet(
                 candidate_presentations,
                 _CANDIDATE_PRESENTATION_SCHEMA,
             ),
+            ("candidate_source_turns", source_turns, _CANDIDATE_SOURCE_TURN_SCHEMA),
             ("voter_permutations", voter_permutations, _VOTER_PERMUTATION_SCHEMA),
             (
                 "experiment_configurations",

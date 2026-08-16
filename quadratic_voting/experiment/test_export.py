@@ -393,7 +393,7 @@ class ExportTests(AnalysisFixture):
     def test_hand_calculated_agreement_and_sign(self) -> None:
         export_dir = self.root / "exports"
         manifest = export_parquet(self.export_store, export_dir)
-        self.assertEqual(len(manifest.files), len(ExportDataset) + 18)
+        self.assertEqual(len(manifest.files), len(ExportDataset) + 19)
         pairs = pq.read_table(
             export_dir / "preference_action_pairs.parquet"
         ).to_pylist()

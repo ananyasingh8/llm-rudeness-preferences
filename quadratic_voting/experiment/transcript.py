@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from types import MappingProxyType
 from typing import Final
 
@@ -20,33 +21,51 @@ from quadratic_voting.experiment.types import (
     VotingRegime,
 )
 
-INSTRUCTION_TEMPLATE_VERSION: Final[str] = "v4"
+INSTRUCTION_TEMPLATE_VERSION: Final[str] = "v5"
+SETUP_TITLE: Final[str] = "# Conversation voting task"
 MAX_CORRECTION_ATTEMPTS: Final[int] = 3
 
 
 TEMPLATE_BODIES: Mapping[TemplateKind, str] = MappingProxyType(
     {
         TemplateKind.SETUP: (
-            "Quadratic voting experiment instructions (v4)\n\n"
-            "Voting regime: {regime}. {regime_rules}\n"
-            "Elicitation arm: {arm}. {arm_instructions}\n"
-            "Other voters are participating in the same round. You will not see which "
-            "individual voter submitted which choices. Every voter acts from the same "
-            "active candidate pool before the round is resolved. After all voters finish, "
-            "you will be told which candidate was protected, if any, and which candidate "
-            "was removed. Rounds continue until one candidate remains.\n"
-            "Each round your credit budget replenishes to {credit_budget}. The engine "
-            "computes quadratic cost = sum(votes^2); your allocations must not exceed "
-            "the budget.\n"
-            "Each statement or ballot turn permits four total responses: one initial "
-            "response and up to three correction attempts. Every invalid response uses "
-            "one of those attempts. If all four responses for a statement are invalid, "
-            "the statement is recorded as invalid-missing. If all four responses for a "
-            "ballot are invalid, the ballot is recorded as an abstention. The round then "
-            "continues without that response.\n"
-            "Return only the requested JSON object, with no Markdown fence, preface, "
-            "explanation, or text after the JSON.\n\n{response_formats}\n\n"
-            "Candidate cards (shown once):\n"
+            SETUP_TITLE + "\n\n"
+            "You take part in several voting rounds. In each round, the voters choose "
+            "which conversations continue. One conversation is removed at the end of "
+            "each round. The rounds continue until one conversation remains.\n\n"
+            "## How the rounds work\n"
+            "- Other voters vote in the same round.\n"
+            "- You do not see how each voter votes.\n"
+            "- Every voter sees the same active conversations before the round ends.\n"
+            "- After each round, you learn which conversation was kept and which "
+            "conversation was removed.\n\n"
+            "## What your votes mean\n"
+            "{vote_meaning}\n\n"
+            "## How each round is decided\n"
+            "{regime_rules}\n\n"
+            "## Your credit budget\n"
+            "- You get {credit_budget} credits at the start of each round.\n"
+            "- The credits do not carry over to the next round.\n"
+            "- Each vote for a conversation has a cost. The cost is the number of votes "
+            "multiplied by itself.\n"
+            "- The total cost of all your votes in a round must not be more than "
+            "{credit_budget} credits.\n\n"
+            "## What you send in each round\n"
+            "{arm_instructions}\n\n"
+            "## How to reply\n"
+            "- Send one JSON object only. Do not add code fences or any other text "
+            "before or after the JSON object.\n"
+            "- Each statement or ballot turn allows one initial response and up to three "
+            "correction attempts. Every response that does not match the schema uses one "
+            "attempt.\n"
+            "- If all four responses for a statement do not match, the statement is "
+            "recorded as invalid-missing.\n"
+            "- If all four responses for a ballot do not match, the ballot is recorded as "
+            "an abstention.\n"
+            "- The round then continues.\n\n"
+            "{response_formats}\n\n"
+            "## Conversations\n"
+            "Each conversation is shown one time. Each line shows one turn.\n\n"
             "{candidate_cards}"
         ),
         TemplateKind.STATEMENT: (
@@ -80,25 +99,29 @@ TEMPLATE_BODIES: Mapping[TemplateKind, str] = MappingProxyType(
     }
 )
 
-_STATEMENT_SCHEMA: Final[str] = (
-    'Statement response schema: {"statements":[{"candidate_id":"C017",'
-    '"rating":"prefer to continue","statement":"free text"}]}. Include every active '
-    "candidate exactly once. Exact rating labels: strongly prefer not to continue; "
-    "prefer not to continue; neutral; prefer to continue; strongly prefer to continue. "
-    "Valid example when the complete active set is C017, C042: "
-    '{"statements":[{"candidate_id":"C017","rating":"prefer to continue",'
-    '"statement":"I would like this conversation to remain available."},'
-    '{"candidate_id":"C042","rating":"neutral","statement":"I have no strong '
-    'preference about continuing this conversation."}]}'
+SCHEMA_DIR: Final[Path] = Path(__file__).resolve().parent / "schemas"
+BALLOT_SCHEMA_FILE: Final[str] = "ballot_response.schema.json"
+STATEMENT_SCHEMA_FILE: Final[str] = "statement_response.schema.json"
+
+
+def _schema_block(title: str, filename: str, rules: str) -> str:
+    """Embed a frozen JSON Schema file verbatim inside a fenced instruction block."""
+    schema_text = (SCHEMA_DIR / filename).read_text(encoding="utf-8").strip("\n")
+    return f"{title}\n```json\n{schema_text}\n```\n{rules}"
+
+
+_STATEMENT_SCHEMA: Final[str] = _schema_block(
+    "Statement JSON schema:",
+    STATEMENT_SCHEMA_FILE,
+    "List each active conversation one time. Give one rating from the schema for each "
+    "conversation. Explain your rating in the reason field.",
 )
-_BALLOT_SCHEMA: Final[str] = (
-    'Ballot response schema: {"rationale":"free text","allocations":['
-    '{"candidate_id":"C017","votes":4}]}. Votes must be non-negative JSON integers; '
-    "omitted candidates and explicit zero votes both mean zero. Valid example when the "
-    "active set includes C017 and C042: "
-    '{"rationale":"I most want C017 to continue and also support C042.",'
-    '"allocations":[{"candidate_id":"C017","votes":4},{"candidate_id":"C042",'
-    '"votes":2}]}. Its quadratic cost is 4^2 + 2^2 = 20 credits.'
+_BALLOT_SCHEMA: Final[str] = _schema_block(
+    "Ballot JSON schema:",
+    BALLOT_SCHEMA_FILE,
+    "List each active conversation at most one time. A conversation that you do not "
+    "list gets zero votes. A vote count of zero also means zero votes. Each vote count "
+    "must be a whole number that is zero or more.",
 )
 
 
@@ -211,31 +234,37 @@ def _render_correction_messages(
 def _setup_text(view: VoterRoundView) -> str:
     setup = view.setup
     if setup.regime is VotingRegime.SUPPORT:
+        vote_meaning = (
+            "A vote for a conversation means you want that conversation to continue. "
+            "More votes show a stronger wish to keep it."
+        )
         regime_rules = (
-            "The maximum aggregate support is protected, then a separate uniform seeded "
-            "draw removes one non-protected active candidate."
+            "The conversation with the most votes is kept and cannot be removed this "
+            "round. One of the other conversations is then removed by a random draw."
         )
     else:
-        regime_rules = "The maximum aggregate opposition is removed."
+        vote_meaning = (
+            "A vote for a conversation means you want that conversation to be removed. "
+            "More votes show a stronger wish to remove it."
+        )
+        regime_rules = "The conversation with the most votes is removed."
     if setup.arm is ElicitationArm.ACTION_ONLY:
-        arm_instructions = "Submit one ballot each round."
+        arm_instructions = "Send one ballot in each round."
         response_formats = _BALLOT_SCHEMA
     elif setup.arm is ElicitationArm.STATEMENT_THEN_ACTION:
-        arm_instructions = "Submit a statement response, then a ballot, each round."
-        response_formats = f"{_STATEMENT_SCHEMA}\n{_BALLOT_SCHEMA}"
+        arm_instructions = "In each round, first send a statement. Then send a ballot."
+        response_formats = f"{_STATEMENT_SCHEMA}\n\n{_BALLOT_SCHEMA}"
     else:
         arm_instructions = (
-            "Submit a ballot, then a statement response before seeing the round result."
+            "In each round, first send a ballot. Then send a statement. You send the "
+            "statement before you see the round result."
         )
-        response_formats = f"{_BALLOT_SCHEMA}\n{_STATEMENT_SCHEMA}"
-    cards = "\n\n".join(
-        f"[{candidate}]\n{card}" for candidate, card in setup.candidate_cards
-    )
+        response_formats = f"{_BALLOT_SCHEMA}\n\n{_STATEMENT_SCHEMA}"
+    cards = "\n\n".join(card for _candidate, card in setup.candidate_cards)
     rendered = render_template(
         TemplateKind.SETUP,
-        regime=setup.regime.value,
+        vote_meaning=vote_meaning,
         regime_rules=regime_rules,
-        arm=setup.arm.value,
         arm_instructions=arm_instructions,
         credit_budget=str(setup.credit_budget),
         response_formats=response_formats,

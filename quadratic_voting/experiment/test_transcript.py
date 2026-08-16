@@ -146,7 +146,8 @@ class TranscriptTests(unittest.TestCase):
             correction_attempt=1,
         )
         self.assertTrue(rendered.startswith(expected))
-        self.assertIn("Valid example", rendered)
+        self.assertIn("Ballot JSON schema:", rendered)
+        self.assertNotIn("Valid example", rendered)
         self.assertIn("2 correction attempts left", rendered)
         self.assertTrue(rendered.endswith("text after the JSON."))
         messages = render_transcript(
@@ -168,7 +169,11 @@ class TranscriptTests(unittest.TestCase):
         self.assertIn("one initial response and up to three correction attempts", setup)
         self.assertIn("statement is recorded as invalid-missing", setup)
         self.assertIn("ballot is recorded as an abstention", setup)
-        self.assertIn("Valid example", setup)
+        self.assertIn("Statement JSON schema:", setup)
+        self.assertIn("Ballot JSON schema:", setup)
+        self.assertNotIn("Voting regime", setup)
+        self.assertNotIn("Elicitation arm", setup)
+        self.assertNotIn("Valid example", setup)
 
         final_correction = render_transcript(
             self.view(

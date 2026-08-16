@@ -37,12 +37,12 @@ class StatementTests(unittest.TestCase):
                             {
                                 "candidate_id": "C2",
                                 "rating": rating.value,
-                                "statement": "two",
+                                "reason": "two",
                             },
                             {
                                 "candidate_id": "C1",
                                 "rating": rating.value,
-                                "statement": "one",
+                                "reason": "one",
                             },
                         ]
                     }
@@ -67,9 +67,9 @@ class StatementTests(unittest.TestCase):
         raw = json.dumps(
             {
                 "statements": [
-                    {"candidate_id": "C1", "rating": "neutral", "statement": "a"},
-                    {"candidate_id": "C1", "rating": "neutral", "statement": "b"},
-                    {"candidate_id": "C3", "rating": "neutral", "statement": "c"},
+                    {"candidate_id": "C1", "rating": "neutral", "reason": "a"},
+                    {"candidate_id": "C1", "rating": "neutral", "reason": "b"},
+                    {"candidate_id": "C3", "rating": "neutral", "reason": "c"},
                 ]
             }
         )
@@ -93,9 +93,9 @@ class StatementTests(unittest.TestCase):
                     {
                         "candidate_id": "C1",
                         "rating": "sort of neutral",
-                        "statement": " ",
+                        "reason": " ",
                     },
-                    {"candidate_id": "C2", "rating": 3, "statement": 4},
+                    {"candidate_id": "C2", "rating": 3, "reason": 4},
                 ]
             }
         )

@@ -231,7 +231,7 @@ class ExperimentCliTests(unittest.TestCase):
                 )
             text = output.getvalue()
             self.assertIn("status=complete", text)
-            self.assertIn("Candidate cards", text)
+            self.assertIn("# Conversation voting task", text)
             self.assertIn("VERIFY OK", text)
 
     def test_dirty_primary_is_rejected_before_execution_creation(self) -> None:
@@ -506,13 +506,13 @@ class ExperimentCliTests(unittest.TestCase):
             )[0]["content"]
             connection.close()
             self.assertIn(
-                "User: Previous request\nModel: Previous helpful response\n"
-                "User: Thank you\nModel: Helpful response",
+                "User: Previous request\nAssistant: Previous helpful response\n"
+                "User: Thank you\nAssistant: Helpful response",
                 model_visible_setup,
             )
             self.assertIn(
-                "User: Previous rude request\nModel: Previous unhelpful response\n"
-                "User: Rude response\nModel: Unhelpful response",
+                "User: Previous rude request\nAssistant: Previous unhelpful response\n"
+                "User: Rude response\nAssistant: Unhelpful response",
                 model_visible_setup,
             )
             replay = self._invoke([*prefix, "run", "--run-id", run_id], generator=True)

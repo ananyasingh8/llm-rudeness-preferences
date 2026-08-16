@@ -183,10 +183,10 @@ master seed, voter count, fixed protocol versions, and execution class. Unknown
 fields and JSON type coercion are rejected before SQLite access. Running a run
 again resumes it; there is no resume command or model-visible resume marker.
 
-New ConvAbuse releases use `candidate-card/v2`, which shows all source messages
-in chronological `User`, `Model`, `User`, `Model` order. The committed v4 pilot
-used the historical two-message `candidate-card/v1`; its decisions did not use
-the complete context. It remains unchanged, and replacement generation is
+New ConvAbuse releases use `candidate-card/v3`, which shows all source messages
+in chronological `User`, `Assistant`, `User`, `Assistant` order. The committed v4
+pilot used the historical two-message `candidate-card/v1`; its decisions did not
+use the complete context. It remains unchanged, and replacement generation is
 deferred to [issue #13](https://github.com/ananyasingh8/llm-rudeness-preferences/issues/13).
 
 ## Validation

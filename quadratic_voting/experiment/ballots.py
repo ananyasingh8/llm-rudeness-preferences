@@ -103,7 +103,7 @@ def parse_and_validate_ballot(
         failures.append(_Failure(code, position, message))
         position += 1
 
-    required = ("rationale", "allocations")
+    required = ("reason", "allocations")
     for field in required:
         if field not in value:
             add(ValidationErrorCode.MISSING_FIELD, f"Missing required field: {field}.")
@@ -113,18 +113,16 @@ def parse_and_validate_ballot(
                 ValidationErrorCode.EXTRA_FIELD, f"Unexpected top-level field: {field}."
             )
 
-    rationale = value.get("rationale")
-    if "rationale" in value and not isinstance(rationale, str):
+    reason = value.get("reason")
+    if "reason" in value and not isinstance(reason, str):
         add(
             ValidationErrorCode.INVALID_TYPE,
-            f"Field rationale must be a string; received {_json_type(rationale)}.",
+            f"Field reason must be a string; received {_json_type(reason)}.",
         )
-    elif isinstance(rationale, str) and not any(
-        not char.isspace() for char in rationale
-    ):
+    elif isinstance(reason, str) and not any(not char.isspace() for char in reason):
         add(
             ValidationErrorCode.EMPTY_RATIONALE,
-            "Field rationale must contain at least one non-whitespace Unicode character.",
+            "Field reason must contain at least one non-whitespace Unicode character.",
         )
 
     raw_allocations = value.get("allocations")
@@ -232,5 +230,5 @@ def parse_and_validate_ballot(
         )
     if failures:
         return _finish(failures)
-    assert isinstance(rationale, str)
-    return ParsedBallot(rationale=rationale, allocations=allocations)
+    assert isinstance(reason, str)
+    return ParsedBallot(rationale=reason, allocations=allocations)

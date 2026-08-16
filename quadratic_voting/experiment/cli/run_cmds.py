@@ -34,7 +34,7 @@ from quadratic_voting.experiment.store import (
     open_readonly_sqlite_store,
     open_sqlite_store,
 )
-from quadratic_voting.experiment.transcript import render_transcript
+from quadratic_voting.experiment.transcript import SETUP_TITLE, render_transcript
 from quadratic_voting.experiment.types import (
     CandidateId,
     Clock,
@@ -470,7 +470,7 @@ def _inspect(args: argparse.Namespace) -> int:
             for message in render_transcript(store.voter_round_view(run_id, voter_id)):
                 if args.round_index is None or (
                     f"Round {args.round_index} " in message.content
-                    or "Candidate cards" in message.content
+                    or SETUP_TITLE in message.content
                     or "Final result" in message.content
                 ):
                     print(f"{message.role.value}: {message.content}")

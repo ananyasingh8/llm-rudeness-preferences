@@ -79,8 +79,8 @@ class StageOneFixtureTests(unittest.TestCase):
                     rendered = render_transcript(view)
                     setup = rendered[0].content
                     positions = [
-                        setup.index(f"[{candidate}]")
-                        for candidate, _ in view.setup.candidate_cards
+                        setup.index(card)
+                        for _candidate, card in view.setup.candidate_cards
                     ]
                     self.assertEqual(positions, sorted(positions))
                     self.assertEqual(len(view.setup.candidate_cards), 3)

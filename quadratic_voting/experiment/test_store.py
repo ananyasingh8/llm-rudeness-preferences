@@ -367,9 +367,7 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(view.setup.instructions, "")
         transcript = render_transcript(view)
         rendered = "\n".join(message.content for message in transcript)
-        self.assertEqual(
-            rendered.count("Quadratic voting experiment instructions (v4)"), 1
-        )
+        self.assertEqual(rendered.count("# Conversation voting task"), 1)
         self.assertNotIn("Additional frozen instructions", rendered)
 
     def test_composed_setup_template_drift_is_actionably_rejected(self) -> None:

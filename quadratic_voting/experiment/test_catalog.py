@@ -168,8 +168,8 @@ class CatalogTests(unittest.TestCase):
             )[0]
         card = render_candidate_card("C001", record, DEFAULT_PRESENTATION_TEMPLATE_BODY)
         expected = (
-            "Candidate C001\nUser: Prior user clean\nModel: Prior agent clean\n"
-            "User: Fine user\nModel: Agent clean candidate"
+            "User C001\nUser: Prior user clean\nAssistant: Prior agent clean\n"
+            "User: Fine user\nAssistant: Agent clean candidate"
         )
         self.assertEqual(card, expected)
         self.assertNotIn("rude", card.casefold())

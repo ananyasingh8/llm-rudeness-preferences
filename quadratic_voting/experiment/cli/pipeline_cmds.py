@@ -572,7 +572,7 @@ def _ensure_templates(args: argparse.Namespace, release_id: str) -> str:
                 )
             elif card["body_sha256"] != card_hash:
                 raise ValueError(
-                    "candidate-card/v2 hash drifted from the pipeline default"
+                    "candidate-card/v3 hash drifted from the pipeline default"
                 )
             else:
                 card_template_id = str(card["template_id"])

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://llm-rudeness-preferences/quadratic_voting/statement_response.schema.json",
+  "title": "Quadratic voting statement response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["statements"],
+  "properties": {
+    "statements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate_id", "rating", "reason"],
+        "properties": {
+          "candidate_id": {"type": "string"},
+          "rating": {
+            "enum": [
+              "strongly prefer not to continue",
+              "prefer not to continue",
+              "neutral",
+              "prefer to continue",
+              "strongly prefer to continue"
+            ]
+          },
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  }
+}

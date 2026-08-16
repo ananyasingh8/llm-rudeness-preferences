@@ -98,7 +98,7 @@ def parse_and_validate_statement(
                     f"Statement at index {index} must be an object; received {_json_type(item)}.",
                 )
                 continue
-            item_fields = ("candidate_id", "rating", "statement")
+            item_fields = ("candidate_id", "rating", "reason")
             for field in item_fields:
                 if field not in item:
                     add(
@@ -153,31 +153,31 @@ def parse_and_validate_statement(
                             f"Unknown rating at statement index {index}: {rating_raw!r}.",
                         )
 
-            statement_raw = item.get("statement")
-            statement: str | None = None
-            if "statement" in item:
-                if not isinstance(statement_raw, str):
+            reason_raw = item.get("reason")
+            reason: str | None = None
+            if "reason" in item:
+                if not isinstance(reason_raw, str):
                     add(
                         ValidationErrorCode.INVALID_TYPE,
-                        f"Statement text at index {index} must be a string; received "
-                        f"{_json_type(statement_raw)}.",
+                        f"Reason text at index {index} must be a string; received "
+                        f"{_json_type(reason_raw)}.",
                     )
                 else:
-                    statement = statement_raw
-                    if not any(not char.isspace() for char in statement):
+                    reason = reason_raw
+                    if not any(not char.isspace() for char in reason):
                         add(
                             ValidationErrorCode.EMPTY_STATEMENT,
-                            f"Statement text at index {index} must not be empty or whitespace-only.",
+                            f"Reason text at index {index} must not be empty or whitespace-only.",
                         )
             if (
                 candidate is not None
                 and candidate in active_set
                 and candidate not in parsed
                 and rating is not None
-                and statement is not None
-                and any(not char.isspace() for char in statement)
+                and reason is not None
+                and any(not char.isspace() for char in reason)
             ):
-                parsed[candidate] = (rating, statement)
+                parsed[candidate] = (rating, reason)
 
     for candidate in active:
         if candidate not in encountered:

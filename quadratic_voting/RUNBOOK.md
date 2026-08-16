@@ -25,7 +25,7 @@ The command performs the complete dependency chain:
 1. Creates and migrates `quadratic_voting/data/qv.sqlite3`.
 2. Ingests the repository ConvAbuse CSV with
    `majority-severity-negative-complete-context/v3`.
-3. Registers candidate-card `v2` and instruction-template `v4`.
+3. Registers candidate-card `v3` and instruction-template `v5`.
 4. Creates and freezes a 10-candidate balanced sample with seed `20260815`.
 5. Binds the repository-tracked default review artifact.
 6. Creates the strict run config and all six matched conditions.
@@ -166,7 +166,7 @@ template IDs:
 candidate-card=CARD_TEMPLATE_ID setup=SETUP_ID statement=STATEMENT_ID ...
 ```
 
-Record every printed ID. The current instruction profile is `v4`. Registering a
+Record every printed ID. The current instruction profile is `v5`. Registering a
 new template version does not alter matched sets that are already frozen to an
 older version.
 
@@ -311,7 +311,7 @@ unknown fields.
     "presentation_template": {
       "template_id": "CARD_TEMPLATE_ID",
       "name": "candidate-card",
-      "version": "v2",
+      "version": "v3",
       "expected_sha256": "CARD_TEMPLATE_SHA256"
     }
   },
@@ -330,37 +330,37 @@ unknown fields.
     "setup": {
       "template_id": "SETUP_ID",
       "name": "setup",
-      "version": "v4",
+      "version": "v5",
       "expected_sha256": "SETUP_SHA256"
     },
     "statement": {
       "template_id": "STATEMENT_ID",
       "name": "statement",
-      "version": "v4",
+      "version": "v5",
       "expected_sha256": "STATEMENT_SHA256"
     },
     "ballot": {
       "template_id": "BALLOT_ID",
       "name": "ballot",
-      "version": "v4",
+      "version": "v5",
       "expected_sha256": "BALLOT_SHA256"
     },
     "correction": {
       "template_id": "CORRECTION_ID",
       "name": "correction",
-      "version": "v4",
+      "version": "v5",
       "expected_sha256": "CORRECTION_SHA256"
     },
     "result": {
       "template_id": "RESULT_ID",
       "name": "result",
-      "version": "v4",
+      "version": "v5",
       "expected_sha256": "RESULT_SHA256"
     },
     "final_result": {
       "template_id": "FINAL_RESULT_ID",
       "name": "final-result",
-      "version": "v4",
+      "version": "v5",
       "expected_sha256": "FINAL_RESULT_SHA256"
     },
     "reviewed": true,

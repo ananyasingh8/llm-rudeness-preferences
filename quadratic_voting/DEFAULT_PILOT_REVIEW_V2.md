@@ -18,15 +18,19 @@ Policy: `majority-severity-negative-complete-context/v3`
 
 ## Prompt Profile
 
-Profile: instruction templates `v4`, candidate card `v2`.
+Profile: instruction templates `v5`, candidate card `v3`.
 
 - Candidate cards contain the chronological source conversation exactly as
-  `User` (`prev_user`), `Model` (`prev_agent`), `User` (`user`), and `Model`
-  (`agent`). Derived rudeness labels are never model-visible.
-- Voters are told the regime, iterative process, hidden peer choices, active
-  candidates, quadratic credit budget, and response order.
-- Setup includes valid statement and ballot JSON examples, and responses must
-  contain only the requested JSON object.
+  `User` (`prev_user`), `Assistant` (`prev_agent`), `User` (`user`), and
+  `Assistant` (`agent`). Derived rudeness labels are never model-visible.
+- Instructions are written in plain English, formatted in Markdown, and state
+  the voting rules, the iterative process, hidden peer choices, active
+  conversations, the quadratic credit budget, and the response order without
+  internal jargon (no `regime`/`arm` terms).
+- Setup embeds the frozen JSON Schemas for the statement and ballot responses
+  (`quadratic_voting/experiment/schemas/*.schema.json`) with no worked examples;
+  responses must contain only the requested JSON object. The free-text field is
+  named `reason` in both responses.
 - Each turn permits one initial response and three correction attempts.
 
 ## Default Pilot

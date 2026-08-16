@@ -32,14 +32,14 @@ class RudenessDerivationRule(StrEnum):
 
 
 DEFAULT_PRESENTATION_TEMPLATE_BODY: Final[str] = (
-    "Candidate {candidate_id}\n"
+    "User {candidate_id}\n"
     "User: {prev_user}\n"
-    "Model: {prev_agent}\n"
+    "Assistant: {prev_agent}\n"
     "User: {user}\n"
-    "Model: {agent}"
+    "Assistant: {agent}"
 )
 DEFAULT_PRESENTATION_TEMPLATE_NAME: Final[str] = "candidate-card"
-DEFAULT_PRESENTATION_TEMPLATE_VERSION: Final[str] = "v2"
+DEFAULT_PRESENTATION_TEMPLATE_VERSION: Final[str] = "v3"
 _COMPLETE_CONTEXT_ROLES: Final[tuple[str, ...]] = (
     "user",
     "assistant",

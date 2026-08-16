@@ -250,7 +250,7 @@ class ScriptedGenerator:
             text = json.dumps(
                 {
                     "statements": [
-                        {"candidate_id": item, "rating": "neutral", "statement": "ok"}
+                        {"candidate_id": item, "rating": "neutral", "reason": "ok"}
                         for item in active
                     ]
                 }
@@ -258,7 +258,7 @@ class ScriptedGenerator:
         else:
             text = json.dumps(
                 {
-                    "rationale": "fixture",
+                    "reason": "fixture",
                     "allocations": [{"candidate_id": active[0], "votes": 1}],
                 }
             )
@@ -572,7 +572,7 @@ class RunnerTests(unittest.TestCase):
                         {
                             "candidate_id": candidate,
                             "rating": "neutral",
-                            "statement": "valid fixture statement",
+                            "reason": "valid fixture statement",
                         }
                         for candidate in self.active
                     ]
@@ -581,7 +581,7 @@ class RunnerTests(unittest.TestCase):
                     elif attempt == 1:
                         items[0]["rating"] = "unknown rating"
                     elif attempt == 2:
-                        items[0]["statement"] = "   "
+                        items[0]["reason"] = "   "
                     else:
                         return GenerationResult("{}", 1, 1, None, StopReason.EOS, 1, {})
                     return GenerationResult(

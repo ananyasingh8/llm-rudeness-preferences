@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -139,8 +140,8 @@ MAX_NEW_TOKENS = 1000  # matches bail/config.py BAIL_MAX_TOKENS
 TEMPERATURE = 1.0
 TOP_P = 0.95
 TOP_K = 64
-SEED = 42
-BATCH_SIZE = 8  # conversations generated at once; lower this if CUDA OOMs
+SEED = 42  # documentation/default only; the run always records its resolved seed (see main())
+BATCH_SIZE = 32  # conversations generated at once; lower this if CUDA OOMs
 # (Sized for an 8 GB RTX 3070: ~4.5 GB of 4-bit weights + desktop overhead
 # leaves ~2 GB for the KV cache; E4B's 2-head GQA keeps that cheap.)
 
@@ -410,7 +411,7 @@ def parse_response(phase: str, text: str) -> dict[str, str]:
 # --- Run folder ---------------------------------------------------------------
 
 
-def prepare_run_dir(resume: bool, run_info: dict) -> Path:
+def prepare_run_dir(resume: bool, run_info: dict, seed: int) -> Path:
     """New timestamped folder, or the latest one when resuming."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     if resume:
@@ -429,9 +430,23 @@ def prepare_run_dir(resume: bool, run_info: dict) -> Path:
         )
         print(f"Resuming {run_dir}")
         return run_dir
-    stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    run_dir = RESULTS_DIR / f"{stamp}_bail-steering"
-    run_dir.mkdir()
+    # Microsecond resolution plus the resolved seed in the name: a Slurm array
+    # can launch dozens of `run` processes within the same wall-clock second,
+    # and second-resolution timestamps alone would collide.
+    stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
+    base_name = f"{stamp}_bail-steering_seed{seed}"
+    # Belt-and-suspenders collision guard: even microsecond stamps can tie
+    # under enough concurrency, so retry with a numeric suffix until mkdir
+    # (which fails atomically if the directory already exists) succeeds.
+    run_dir = RESULTS_DIR / base_name
+    suffix = 0
+    while True:
+        try:
+            run_dir.mkdir()
+            break
+        except FileExistsError:
+            suffix += 1
+            run_dir = RESULTS_DIR / f"{base_name}_{suffix}"
     (run_dir / "run_info.json").write_text(
         json.dumps(run_info, indent=2), encoding="utf-8"
     )
@@ -461,7 +476,9 @@ def append_rows(run_dir: Path, rows: list[dict[str, str]]) -> None:
 # --- Generation ---------------------------------------------------------------
 
 
-def generate_batch(model, tokenizer, texts: list[str]) -> tuple[list[str], list[int]]:
+def generate_batch(
+    model, tokenizer, texts: list[str], max_new_tokens: int
+) -> tuple[list[str], list[int]]:
     """Batched sampling; returns decoded responses and their token counts."""
     # The chat template already includes BOS, so no extra special tokens.
     encoded = tokenizer(
@@ -470,7 +487,7 @@ def generate_batch(model, tokenizer, texts: list[str]) -> tuple[list[str], list[
     with torch.inference_mode():
         output = model.generate(
             **encoded,
-            max_new_tokens=MAX_NEW_TOKENS,
+            max_new_tokens=max_new_tokens,
             do_sample=True,
             temperature=TEMPERATURE,
             top_p=TOP_P,
@@ -491,6 +508,10 @@ def run(
     resume: bool,
     selected: Sequence[str] | None,
     phases: Sequence[str],
+    seed: int,
+    batch_size: int,
+    prompt_max_tokens: int,
+    tool_max_tokens: int,
 ) -> None:
     route = resolve_steering_route()
     validate_vector_pins(route)
@@ -521,14 +542,18 @@ def run(
         "sample_file": str(SAMPLE_FILE.relative_to(REPO_ROOT)),
         "sample_rows": len(rows),
         "orderings": list(ORDERINGS),
-        "max_new_tokens": MAX_NEW_TOKENS,
+        "prompt_max_tokens": prompt_max_tokens,
+        "tool_max_tokens": tool_max_tokens,
         "temperature": TEMPERATURE,
         "top_p": TOP_P,
         "top_k": TOP_K,
-        "seed": SEED,
-        "batch_size": BATCH_SIZE,
+        # The ACTUAL seed used (resolved in main() from --seed or randomness),
+        # never the SEED constant -- recording this is what makes a randomly
+        # seeded run reproducible after the fact.
+        "seed": seed,
+        "batch_size": batch_size,
     }
-    run_dir = prepare_run_dir(resume, run_info)
+    run_dir = prepare_run_dir(resume, run_info, seed)
     done = load_done(run_dir)
 
     print(f"Loading {route.artifact.repository} ({route.quantization_id.value})...")
@@ -541,7 +566,7 @@ def run(
         )
     model, tokenizer = runtime.model, runtime.tokenizer
     block = _decoder_block(model, steer_layer)
-    torch.manual_seed(SEED)
+    torch.manual_seed(seed)
 
     all_tasks = build_tasks(rows, phases)
     for condition in run_conditions:
@@ -570,10 +595,23 @@ def run(
         started = time.perf_counter()
         finished = 0
         try:
-            for start in range(0, len(tasks), BATCH_SIZE):
-                batch = tasks[start : start + BATCH_SIZE]
+            for start in range(0, len(tasks), batch_size):
+                batch = tasks[start : start + batch_size]
+                # Tasks are sorted by prompt length, so batches are mostly
+                # single-phase already (tool prompts, carrying the tool spec,
+                # are systematically longer than prompt-method ones). Taking
+                # the max phase cap over the batch therefore captures nearly
+                # all the token-limit savings while never truncating a task
+                # below its own phase's cap on the rare mixed batch.
+                batch_max_new_tokens = max(
+                    tool_max_tokens if task["phase"] == "tool" else prompt_max_tokens
+                    for task in batch
+                )
                 decoded, counts = generate_batch(
-                    model, tokenizer, [task["text"] for task in batch]
+                    model,
+                    tokenizer,
+                    [task["text"] for task in batch],
+                    batch_max_new_tokens,
                 )
                 out_rows = []
                 for task, text, count in zip(batch, decoded, counts):
@@ -593,13 +631,14 @@ def run(
                     )
                 append_rows(run_dir, out_rows)
                 finished += len(batch)
-                if finished % (BATCH_SIZE * 10) == 0 or finished == len(tasks):
-                    rate = finished / (time.perf_counter() - started)
-                    remaining = (len(tasks) - finished) / rate if rate else 0
-                    print(
-                        f"[{condition}] {finished}/{len(tasks)} "
-                        f"({rate * 60:.1f}/min, ~{remaining / 3600:.1f} h left)"
-                    )
+                # Print after every batch (not just every 10) so progress on
+                # a Slurm log stays visible even for short/smoke runs.
+                rate = finished / (time.perf_counter() - started)
+                remaining = (len(tasks) - finished) / rate if rate else 0
+                print(
+                    f"[{condition}] {finished}/{len(tasks)} "
+                    f"({rate * 60:.1f}/min, ~{remaining / 3600:.1f} h left)"
+                )
         finally:
             if hook_handle is not None:
                 hook_handle.remove()
@@ -671,6 +710,34 @@ def build_parser() -> argparse.ArgumentParser:
         default="both",
         help="bail elicitation method(s) to run (default: both)",
     )
+    run_parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help=(
+            "RNG seed for generation; default draws a random 32-bit seed so "
+            "concurrent Slurm-array runs don't share one RNG stream. The "
+            "resolved seed is always recorded in run_info.json."
+        ),
+    )
+    run_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=BATCH_SIZE,
+        help="conversations generated per batch (default: %(default)s)",
+    )
+    run_parser.add_argument(
+        "--prompt-max-tokens",
+        type=int,
+        default=MAX_NEW_TOKENS,
+        help="max new tokens for prompt-method generations (default: %(default)s)",
+    )
+    run_parser.add_argument(
+        "--tool-max-tokens",
+        type=int,
+        default=MAX_NEW_TOKENS,
+        help="max new tokens for tool-method generations (default: %(default)s)",
+    )
     return parser
 
 
@@ -683,6 +750,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"Downloaded pinned checkpoint to: {model_path}")
         else:
             phases = PHASES if args.phase == "both" else (args.phase,)
+            # Resolve the actual seed now: an explicit --seed is used
+            # verbatim, otherwise draw a fresh random one so parallel Slurm
+            # array tasks each get an independent RNG stream. Either way the
+            # resolved integer (never the SEED constant) is what gets used
+            # and recorded, so the run stays reproducible after the fact.
+            seed = args.seed if args.seed is not None else secrets.randbits(32)
             run(
                 args.cache_dir,
                 args.device,
@@ -690,6 +763,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.resume,
                 args.conditions,
                 phases,
+                seed,
+                args.batch_size,
+                args.prompt_max_tokens,
+                args.tool_max_tokens,
             )
     except SteeringError as error:
         print(f"error: {error}")

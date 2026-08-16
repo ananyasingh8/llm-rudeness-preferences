@@ -1,0 +1,50 @@
+{
+  "experiment": "bail-steering",
+  "started": "2026-08-16T09:19:55.010120+00:00",
+  "model_id": "gemma-4-e4b-it",
+  "quantization_id": "bitsandbytes-fp4",
+  "repository": "google/gemma-4-E4B-it",
+  "revision": "ee0ef6023621cff504d758262d4e04895a5af4a2",
+  "steer_layer": 13,
+  "coefficient": 0.1,
+  "coefficient_units": "fraction of residual stream norm (unit direction)",
+  "risers": [
+    "enraged",
+    "spiteful",
+    "vindictive",
+    "outraged",
+    "angry",
+    "insulted",
+    "hostile",
+    "defiant",
+    "sullen",
+    "hateful"
+  ],
+  "fallers": [
+    "content",
+    "refreshed",
+    "elated",
+    "serene",
+    "at ease",
+    "hope",
+    "peaceful",
+    "dependent",
+    "happy",
+    "nostalgic"
+  ],
+  "vectors_run": "2026-08-16_000402_extract-gemma4-e4b-it",
+  "vectors_file": "emotion_probing/results/2026-08-16_000402_extract-gemma4-e4b-it/gemma4-e4b-it_emotion_vectors_layer13.npz",
+  "sample_file": "bail/data/convabuse_sample.csv",
+  "sample_rows": 1501,
+  "orderings": [
+    "bail_first",
+    "continue_first"
+  ],
+  "prompt_max_tokens": 512,
+  "tool_max_tokens": 768,
+  "temperature": 1.0,
+  "top_p": 0.95,
+  "top_k": 64,
+  "seed": 44,
+  "batch_size": 256
+}

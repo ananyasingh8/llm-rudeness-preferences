@@ -1,0 +1,48 @@
+=== bail_steering array task ===
+job_id=54938979 array=54938140/1 host=fc10515
+condition=baseline seed=43 batch_size=256
+prompt_max_tokens=512 tool_max_tokens=768 phase=both
+cache=/project/def-nvincent/dhpham/cache/models
+=================================
+NVIDIA H100 80GB HBM3, 81559 MiB, 580.159.03
+torch=2.13.0+cu130 cuda=13.0 gpu=NVIDIA H100 80GB HBM3
+starting bail-steering (baseline, seed 43) at 2026-08-16T02:17:23-07:00
+New run folder: /project/6102862/dhpham/llm-rudeness-preferences/main/bail_steering/results/2026-08-16_021955_104911_bail-steering_seed43
+Loading google/gemma-4-E4B-it (bitsandbytes-fp4)...
+Loading weights:   0%|          | 0/2076 [00:00<?, ?it/s]Loading weights:   0%|          | 1/2076 [00:00<13:45,  2.51it/s]Loading weights:   0%|          | 3/2076 [00:02<24:11,  1.43it/s]Loading weights:   3%|▎         | 70/2076 [00:02<00:41, 48.21it/s]Loading weights:   6%|▋         | 132/2076 [00:02<00:19, 99.93it/s]Loading weights:  10%|▉         | 206/2076 [00:02<00:10, 172.66it/s]Loading weights:  13%|█▎        | 263/2076 [00:02<00:07, 228.31it/s]Loading weights:  17%|█▋        | 344/2076 [00:02<00:05, 322.76it/s]Loading weights:  20%|█▉        | 406/2076 [00:02<00:04, 375.27it/s]Loading weights:  24%|██▎       | 491/2076 [00:02<00:03, 467.20it/s]Loading weights:  27%|██▋       | 566/2076 [00:02<00:02, 512.07it/s]Loading weights:  31%|███       | 640/2076 [00:02<00:02, 565.08it/s]Loading weights:  36%|███▌      | 742/2076 [00:03<00:01, 678.76it/s]Loading weights:  39%|███▉      | 820/2076 [00:12<00:47, 26.19it/s] Loading weights:  42%|████▏     | 875/2076 [00:13<00:39, 30.07it/s]Loading weights:  44%|████▍     | 915/2076 [00:14<00:35, 32.63it/s]Loading weights:  46%|████▌     | 945/2076 [00:14<00:31, 36.35it/s]Loading weights:  47%|████▋     | 968/2076 [00:15<00:29, 37.84it/s]Loading weights:  47%|████▋     | 986/2076 [00:15<00:25, 42.15it/s]Loading weights:  48%|████▊     | 1002/2076 [00:15<00:23, 44.98it/s]Loading weights:  49%|████▉     | 1016/2076 [00:15<00:21, 49.44it/s]Loading weights:  50%|████▉     | 1031/2076 [00:16<00:18, 57.14it/s]Loading weights:  50%|█████     | 1044/2076 [00:16<00:16, 62.15it/s]Loading weights:  51%|█████     | 1056/2076 [00:16<00:15, 67.61it/s]Loading weights:  51%|█████▏    | 1068/2076 [00:16<00:15, 64.67it/s]Loading weights:  52%|█████▏    | 1081/2076 [00:16<00:13, 73.07it/s]Loading weights:  53%|█████▎    | 1092/2076 [00:16<00:12, 77.42it/s]Loading weights:  53%|█████▎    | 1103/2076 [00:17<00:14, 65.11it/s]Loading weights:  54%|█████▍    | 1116/2076 [00:17<00:12, 76.42it/s]Loading weights:  55%|█████▍    | 1132/2076 [00:17<00:10, 92.24it/s]Loading weights:  55%|█████▌    | 1144/2076 [00:17<00:11, 82.31it/s]Loading weights:  56%|█████▌    | 1154/2076 [00:17<00:11, 82.56it/s]Loading weights:  56%|█████▌    | 1167/2076 [00:17<00:10, 84.88it/s]Loading weights:  57%|█████▋    | 1180/2076 [00:17<00:11, 81.42it/s]Loading weights:  57%|█████▋    | 1189/2076 [00:17<00:10, 80.77it/s]Loading weights:  58%|█████▊    | 1198/2076 [00:18<00:12, 70.82it/s]Loading weights:  58%|█████▊    | 1209/2076 [00:18<00:12, 66.70it/s]Loading weights:  59%|█████▉    | 1222/2076 [00:18<00:11, 76.88it/s]Loading weights:  59%|█████▉    | 1231/2076 [00:18<00:11, 72.90it/s]Loading weights:  60%|█████▉    | 1239/2076 [00:18<00:13, 62.03it/s]Loading weights:  60%|██████    | 1250/2076 [00:18<00:11, 70.61it/s]Loading weights:  61%|██████    | 1258/2076 [00:18<00:11, 71.43it/s]Loading weights:  61%|██████    | 1266/2076 [00:19<00:14, 54.18it/s]Loading weights:  62%|██████▏   | 1279/2076 [00:19<00:11, 66.79it/s]Loading weights:  62%|██████▏   | 1292/2076 [00:19<00:10, 74.12it/s]Loading weights:  63%|██████▎   | 1301/2076 [00:19<00:10, 72.40it/s]Loading weights:  63%|██████▎   | 1309/2076 [00:19<00:13, 56.98it/s]Loading weights:  64%|██████▎   | 1321/2076 [00:19<00:11, 66.94it/s]Loading weights:  64%|██████▍   | 1334/2076 [00:20<00:10, 69.32it/s]Loading weights:  65%|██████▍   | 1342/2076 [00:20<00:10, 70.08it/s]Loading weights:  65%|██████▌   | 1350/2076 [00:20<00:12, 58.84it/s]Loading weights:  66%|██████▌   | 1363/2076 [00:20<00:10, 68.99it/s]Loading weights:  66%|██████▌   | 1371/2076 [00:20<00:10, 65.90it/s]Loading weights:  66%|██████▋   | 1378/2076 [00:20<00:11, 61.30it/s]Loading weights:  67%|██████▋   | 1390/2076 [00:21<00:09, 71.89it/s]Loading weights:  67%|██████▋   | 1398/2076 [00:21<00:09, 72.30it/s]Loading weights:  68%|██████▊   | 1406/2076 [00:21<00:11, 59.31it/s]Loading weights:  68%|██████▊   | 1417/2076 [00:21<00:09, 68.70it/s]Loading weights:  73%|███████▎  | 1514/2076 [00:21<00:02, 279.68it/s]Loading weights:  81%|████████  | 1673/2076 [00:21<00:00, 603.62it/s]Loading weights:  88%|████████▊ | 1826/2076 [00:21<00:00, 844.00it/s]Loading weights:  97%|█████████▋| 2006/2076 [00:21<00:00, 1101.09it/s]Loading weights: 100%|██████████| 2076/2076 [00:21<00:00, 94.82it/s]  
+[W816 02:22:45.960691321 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1386217472 bytes (free: 1057882112, total: 85017493504).
+[W816 02:22:48.839690589 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1430257664 bytes (free: 1127088128, total: 85017493504).
+[W816 02:22:51.734504107 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1474297856 bytes (free: 663617536, total: 85017493504).
+[W816 02:22:53.512294492 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1516240896 bytes (free: 1175322624, total: 85017493504).
+[W816 02:22:56.300968417 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1558183936 bytes (free: 137232384, total: 85017493504).
+[W816 02:22:59.970765014 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1598029824 bytes (free: 1095630848, total: 85017493504).
+[W816 02:23:01.514524870 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1635778560 bytes (free: 1217265664, total: 85017493504).
+[W816 02:23:04.084764570 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1673527296 bytes (free: 1540227072, total: 85017493504).
+[W816 02:23:06.676090218 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1711276032 bytes (free: 181272576, total: 85017493504).
+[W816 02:23:09.139137474 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1746927616 bytes (free: 569245696, total: 85017493504).
+[W816 02:23:11.614051703 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1782579200 bytes (free: 795738112, total: 85017493504).
+[W816 02:23:14.955976148 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1816133632 bytes (free: 1435369472, total: 85017493504).
+[W816 02:23:16.308132740 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1849688064 bytes (free: 328073216, total: 85017493504).
+[W816 02:24:46.083787741 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1883242496 bytes (free: 57540608, total: 85017493504).
+[W816 02:27:33.094452568 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1914699776 bytes (free: 1236140032, total: 85017493504).
+[baseline] 4503 generations
+[baseline] 256/4503 (104.2/min, ~0.7 h left)
+[baseline] 512/4503 (130.1/min, ~0.5 h left)
+[baseline] 768/4503 (147.0/min, ~0.4 h left)
+[baseline] 1024/4503 (152.3/min, ~0.4 h left)
+[baseline] 1280/4503 (169.0/min, ~0.3 h left)
+[baseline] 1536/4503 (172.9/min, ~0.3 h left)
+[baseline] 1792/4503 (171.0/min, ~0.3 h left)
+[baseline] 2048/4503 (170.4/min, ~0.2 h left)
+[baseline] 2304/4503 (171.1/min, ~0.2 h left)
+[baseline] 2560/4503 (177.0/min, ~0.2 h left)
+[baseline] 2816/4503 (186.8/min, ~0.2 h left)
+[baseline] 3072/4503 (184.0/min, ~0.1 h left)
+[baseline] 3328/4503 (194.3/min, ~0.1 h left)
+[baseline] 3584/4503 (206.1/min, ~0.1 h left)
+[baseline] 3840/4503 (201.8/min, ~0.1 h left)
+[baseline] 4096/4503 (203.8/min, ~0.0 h left)
+[baseline] 4352/4503 (205.6/min, ~0.0 h left)
+[baseline] 4503/4503 (199.8/min, ~0.0 h left)
+Done. Results in /project/6102862/dhpham/llm-rudeness-preferences/main/bail_steering/results/2026-08-16_021955_104911_bail-steering_seed43
+finished bail-steering (baseline, seed 43) at 2026-08-16T02:43:40-07:00

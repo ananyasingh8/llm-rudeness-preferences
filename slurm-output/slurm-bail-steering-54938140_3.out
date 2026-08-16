@@ -1,0 +1,45 @@
+=== bail_steering array task ===
+job_id=54938981 array=54938140/3 host=fc10512
+condition=baseline seed=45 batch_size=256
+prompt_max_tokens=512 tool_max_tokens=768 phase=both
+cache=/project/def-nvincent/dhpham/cache/models
+=================================
+NVIDIA H100 80GB HBM3, 81559 MiB, 580.159.03
+torch=2.13.0+cu130 cuda=13.0 gpu=NVIDIA H100 80GB HBM3
+starting bail-steering (baseline, seed 45) at 2026-08-16T02:17:23-07:00
+Traceback (most recent call last):
+  File "/project/6102862/dhpham/llm-rudeness-preferences/main/llm_runtime/transformers.py", line 364, in resolve_device
+    free_bytes, _ = torch.cuda.mem_get_info()
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/6102862/dhpham/llm-rudeness-preferences/main/.venv/lib/python3.12/site-packages/torch/cuda/memory.py", line 862, in mem_get_info
+    return torch.cuda.cudart().cudaMemGetInfo(device)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.AcceleratorError: CUDA error: out of memory
+Search for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+For more detailed error information, run with CUDA_LOG_FILE=stderr
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/project/6102862/dhpham/llm-rudeness-preferences/main/bail_steering/main.py", line 778, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/project/6102862/dhpham/llm-rudeness-preferences/main/bail_steering/main.py", line 759, in main
+    run(
+  File "/project/6102862/dhpham/llm-rudeness-preferences/main/bail_steering/main.py", line 560, in run
+    runtime = create_transformers_runtime(route, cache_dir=cache_dir, device=device)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/6102862/dhpham/llm-rudeness-preferences/main/llm_runtime/transformers.py", line 558, in create_transformers_runtime
+    resolved_device = resolve_device(device, route)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/6102862/dhpham/llm-rudeness-preferences/main/llm_runtime/transformers.py", line 372, in resolve_device
+    raise TransformersRuntimeError(
+llm_runtime.transformers.TransformersRuntimeError: Local runtime device validation failed in llm_runtime.transformers.resolve_device while inspecting CUDA memory. Safe placement cannot be confirmed, so loading stopped. Repair CUDA diagnostics and retry with `--device cuda`; this route does not support CPU, automatic, precision, or model fallback. Underlying error: CUDA error: out of memory
+Search for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+For more detailed error information, run with CUDA_LOG_FILE=stderr
+
+New run folder: /project/6102862/dhpham/llm-rudeness-preferences/main/bail_steering/results/2026-08-16_021955_023851_bail-steering_seed45
+Loading google/gemma-4-E4B-it (bitsandbytes-fp4)...

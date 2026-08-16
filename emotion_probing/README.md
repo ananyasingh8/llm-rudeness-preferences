@@ -184,6 +184,21 @@ The setup fails if DRAC does not provide an exact version pinned by `uv.lock`. T
 wheels where available and permit PyPI as a fallback for missing packages, run
 `bash scripts/setup-fir.sh --allow-pypi` on the login node.
 
+Next, stage the checkpoint into the persistent project cache from a login node (compute
+nodes are offline). Disable the `hf_xet` transfer backend, which the Alliance documentation
+flags as failure-prone on their systems:
+
+```
+export HF_HUB_DISABLE_XET=1
+.venv/bin/python -m emotion_probing.main \
+  --experiment convabuse-31b \
+  --cache-dir /project/def-nvincent/dhpham/cache/models \
+  download
+```
+
+Run this inside `tmux` or `screen` so a dropped SSH session does not interrupt the ~18 GB
+transfer. `HF_HUB_DISABLE_XET` only affects downloads; the batch job runs fully offline.
+
 From the repository root, submit it with your allocation on the command line:
 
 ```

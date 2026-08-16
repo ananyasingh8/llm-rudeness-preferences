@@ -69,6 +69,10 @@ fi
 export PATH="$UV_INSTALL_DIR:$PATH"
 export UV_CACHE_DIR
 export UV_NO_MANAGED_PYTHON=1
+# The scratch cache and the /project venv are on different filesystems, so
+# hardlinking is impossible. Copy mode makes the venv self-contained and
+# survives scratch purges; the cost is a one-time copy during install.
+export UV_LINK_MODE=copy
 mkdir -p "$UV_CACHE_DIR"
 
 if ! command -v uv >/dev/null 2>&1; then

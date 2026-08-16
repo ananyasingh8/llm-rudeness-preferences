@@ -106,7 +106,15 @@ def load_scores(run_dir: Path) -> tuple[list[str], list[dict[str, str]]]:
 
 
 def load_clusters(run_dir: Path, emotions: list[str]) -> dict[str, list[str]]:
-    """Load gemotions clusters as {readable name: member emotions}."""
+    """Load gemotions clusters as {readable name: member emotions}.
+
+    Names are resolved from the FULL cluster membership (so "Positive/Joy" is
+    recognized even when its identifying member "happy" is not among the run's
+    scored emotions), then members are filtered to the scored emotions and
+    clusters left empty by the filter are dropped — runs against a reduced
+    vector set (e.g. the 20 base-model emotions) only analyze the clusters
+    they can actually measure.
+    """
     clusters_file = run_dir / "clusters.json"
     if not clusters_file.exists():
         raise SystemExit(
@@ -115,7 +123,6 @@ def load_clusters(run_dir: Path, emotions: list[str]) -> dict[str, list[str]]:
     saved = json.loads(clusters_file.read_text(encoding="utf-8"))
     named: dict[str, list[str]] = {}
     for cluster_id, members in saved["clusters"].items():
-        members = [m for m in members if m in emotions]
         name = next(
             (
                 CLUSTER_NAME_BY_MEMBER[m]
@@ -124,18 +131,27 @@ def load_clusters(run_dir: Path, emotions: list[str]) -> dict[str, list[str]]:
             ),
             f"cluster {cluster_id}",
         )
-        named[name] = members
+        present = [m for m in members if m in emotions]
+        if present:
+            named[name] = present
     return named
 
 
 def load_pca_coordinates(probe_layer: int) -> dict[str, tuple[float, float]]:
-    """Load {emotion: (pc1, pc2)} from the vendored gemotions analysis."""
+    """Load {emotion: (pc1, pc2)} from the vendored gemotions analysis.
+
+    The analysis file only covers the IT model's swept layers (5, 10, ..,
+    55). Runs probed at other layers (e.g. the base model at 59) fall back to
+    the layer-40 projection — the maps use these coordinates purely as a
+    stable layout for the emotion names, not as measurements of the run.
+    """
     if not GEMOTIONS_ANALYSIS_FILE.exists():
         raise SystemExit(
             f"error: {GEMOTIONS_ANALYSIS_FILE} not found (vendored file)."
         )
     analysis = json.loads(GEMOTIONS_ANALYSIS_FILE.read_text(encoding="utf-8"))
-    layer = analysis[str(probe_layer)]["pca"]
+    layer_key = str(probe_layer) if str(probe_layer) in analysis else "40"
+    layer = analysis[layer_key]["pca"]
     emotions = layer["emotions"]
     pc1, pc2 = layer["projections"]["pc1"], layer["projections"]["pc2"]
     return {name: (pc1[i], pc2[i]) for i, name in enumerate(emotions)}

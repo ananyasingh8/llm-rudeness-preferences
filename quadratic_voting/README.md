@@ -92,7 +92,37 @@ uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 inspect --run-i
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 verify --run-id RUN
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 export --matched-set MATCHED --out exports/MATCHED
 uv run python -m quadratic_voting.experiment.cli plot --export-dir exports/MATCHED --out plots/MATCHED
+uv run python -m quadratic_voting.analyze --export-dir exports/MATCHED --out analytics/MATCHED
 ```
+
+## No-GPU snapshot analytics
+
+`quadratic_voting.analyze` only reads an existing Parquet export; it does not
+open SQLite, load a model, require a GPU, or make provider calls. It writes
+stable Parquet tables for `snapshot_voter_candidate`, `snapshot_voter_summary`,
+`snapshot_candidate_summary` (one row per run/snapshot/candidate, aggregated
+over voters), `snapshot_rudeness_summary` (the distinct rudeness facet used by
+the figures), `survivor_demographics`, and
+`stated_preference_agreement`, plus five deterministic PNG figures.
+
+Snapshots are selected per run from its observed round positions: up to five
+evenly spaced milestones, always including the first and final observed rounds.
+Short and non-contiguous runs are deduplicated and never gain invented rounds.
+Current values are that round's accepted allocation; quadratic credits are
+`votes ** 2`; cumulative-before excludes it and cumulative-through includes it.
+Credits are spend, not a balance. `current_remaining_credit` is emitted only as
+the replenished per-voter-round budget minus that round's spend.
+
+Raw votes are retained and action is regime-signed; credit spend is unsigned,
+with separately named signed credit spend for stated-preference association.
+Accepted zero allocations are zero. Abstained and terminal-missing actions
+remain null. All persisted rudeness labels, including `ambiguous_tie`, remain
+separate. Survivors are candidates in `round_candidate` at snapshot start.
+Candidate and rudeness summaries include current and cumulative-before/through
+vote and credit means and sums. Source turns are ordered by `turn_index`; lengths are Unicode character counts.
+Without a second turn, second and total lengths are null. Spearman outputs are
+descriptive stated-preference associations (not causal claims); action-only and
+undefined inputs retain explicit null reasons.
 
 Matched-set creation accepts only one strict `qv-run-config/v1` JSON file. The
 file contains the frozen sample artifact path and hash, complete model and

@@ -103,7 +103,28 @@ stable Parquet tables for `snapshot_voter_candidate`, `snapshot_voter_summary`,
 `snapshot_candidate_summary` (one row per run/snapshot/candidate, aggregated
 over voters), `snapshot_rudeness_summary` (the distinct rudeness facet used by
 the figures), `survivor_demographics`, and
-`stated_preference_agreement`, plus five deterministic PNG figures.
+`stated_preference_agreement`, plus six baseline deterministic PNG figures:
+`average_current_votes_credits`, `cumulative_votes_credits_before_through`,
+`survivor_rudeness_distribution`, `candidate_rudeness_demographics`,
+`survivor_message_lengths`, and `stated_preference_agreement`.
+It also writes `snapshot_voter_budget_distribution` (candidate-level absolute
+quadratic-credit segments with deterministic `C1`… labels),
+`snapshot_budget_utilization` (spend, unspent, utilization, and full-budget
+indicator for valid ballots), `voter_credit_budget_distribution.png`, and a
+self-contained `timeline.html`. Open `analytics/MATCHED/timeline.html` directly
+in a browser; it makes no network requests or model/provider calls.
+
+The additive rudeness-faceted inventory is
+`snapshot_voter_rudeness_summary` (current per-voter sums within each persisted
+rudeness level, null when an action is null), `snapshot_candidate_labels`
+(deterministic `C1`, `C2`, … mapping), and
+`stated_preference_agreement_by_rudeness` (per-voter within-rudeness Spearman
+relations), plus deterministic figures for per-voter current votes and credits,
+per-candidate current votes and credits, cumulative vote and credit totals
+before/through the snapshot, each of the three survivor source-message-length
+distributions, and stated-preference agreement by rudeness. These filenames all
+end in `_by_rudeness`, except the two `cumulative_*_totals_before_through_by_rudeness`
+figures. Rudeness is a panel facet in every additive figure, not merely a color.
 
 Snapshots are selected per run from its observed round positions: up to five
 evenly spaced milestones, always including the first and final observed rounds.
@@ -112,17 +133,34 @@ Current values are that round's accepted allocation; quadratic credits are
 `votes ** 2`; cumulative-before excludes it and cumulative-through includes it.
 Credits are spend, not a balance. `current_remaining_credit` is emitted only as
 the replenished per-voter-round budget minus that round's spend.
+The pilot replenishes the budget to 100 each round. A ballot is valid when its
+quadratic cost is at most that budget; full spending is not required. Therefore
+unspent means budget minus spend only for valid ballots. Abstained or
+terminal-missing ballots remain null and are visibly marked as missing rather
+than treated as 100 unspent.
+
+Persisted regime IDs remain `support` and `opposition` in schemas, Parquet,
+configuration, and provenance. Analyst-facing labels are **Most Votes Kept**
+for `support` (the highest aggregate support is protected, then a different
+active candidate is removed by seeded uniform draw) and **Most Votes Kicked**
+for `opposition` (the highest aggregate opposition is removed).
 
 Raw votes are retained and action is regime-signed; credit spend is unsigned,
 with separately named signed credit spend for stated-preference association.
 Accepted zero allocations are zero. Abstained and terminal-missing actions
 remain null. All persisted rudeness labels, including `ambiguous_tie`, remain
-separate. Survivors are candidates in `round_candidate` at snapshot start.
+separate. Survivors are candidates in `round_candidate` at snapshot start; the
+candidate-rudeness demographics figure shows their categorical counts by
+snapshot and arm/regime condition.
 Candidate and rudeness summaries include current and cumulative-before/through
 vote and credit means and sums. Source turns are ordered by `turn_index`; lengths are Unicode character counts.
 Without a second turn, second and total lengths are null. Spearman outputs are
 descriptive stated-preference associations (not causal claims); action-only and
 undefined inputs retain explicit null reasons.
+The cumulative-total figures plot the persisted `sum_cumulative_before_*` and
+`sum_cumulative_through_*` fields (totals, not averages). Length-distribution
+figures exclude null second turns and state that cross-snapshot changes reflect
+survivor composition, not a candidate's message changing.
 
 Matched-set creation accepts only one strict `qv-run-config/v1` JSON file. The
 file contains the frozen sample artifact path and hash, complete model and

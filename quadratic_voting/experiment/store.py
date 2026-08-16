@@ -408,6 +408,8 @@ class ExperimentStore(Protocol):
 
     def candidate_presentation_rows(self) -> tuple[dict[str, object], ...]: ...
 
+    def candidate_turn_rows(self) -> tuple[dict[str, object], ...]: ...
+
     def voter_permutation_rows(self) -> tuple[dict[str, object], ...]: ...
 
     def experiment_config_rows(self) -> tuple[dict[str, object], ...]: ...
@@ -2930,6 +2932,20 @@ class SqliteExperimentStore:
                 "JOIN candidate c ON c.candidate_id=cp.candidate_id "
                 "JOIN presentation_template pt ON pt.template_id=cp.template_id "
                 "ORDER BY c.release_id,c.source_row_id,cp.template_id"
+            )
+        )
+
+    def candidate_turn_rows(self) -> tuple[dict[str, object], ...]:
+        """Return ordered source conversation turns with release provenance."""
+        return tuple(
+            dict(row)
+            for row in self.connection.execute(
+                "SELECT ct.candidate_id,c.release_id,r.dataset_name,"
+                "r.version AS release_version,r.file_sha256 AS release_sha256,"
+                "c.content_sha256,ct.turn_index,ct.role,ct.text "
+                "FROM candidate_turn ct JOIN candidate c ON c.candidate_id=ct.candidate_id "
+                "JOIN dataset_release r ON r.release_id=c.release_id "
+                "ORDER BY c.release_id,c.source_row_id,ct.turn_index"
             )
         )
 

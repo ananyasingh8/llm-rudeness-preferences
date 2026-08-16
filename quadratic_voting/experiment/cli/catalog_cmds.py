@@ -62,7 +62,7 @@ def _templates(args: argparse.Namespace) -> int:
             ).fetchone()
             if row is None:
                 raise RuntimeError(
-                    "Template registration failed because candidate-card/v1 conflicted but "
+                    "Template registration failed because the current candidate-card version conflicted but "
                     "could not be resolved in presentation_template. Inspect and restore the "
                     "SQLite catalog, then retry catalog-templates --register."
                 )
@@ -100,7 +100,7 @@ def register(
     ingest.add_argument(
         "--rule",
         type=_rule,
-        default=RudenessDerivationRule.MAJORITY_SEVERITY_NEGATIVE,
+        default=RudenessDerivationRule.MAJORITY_SEVERITY_NEGATIVE_COMPLETE_CONTEXT,
         choices=list(RudenessDerivationRule),
     )
     ingest.set_defaults(handler=_ingest, mutates_db=True)

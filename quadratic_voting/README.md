@@ -81,7 +81,7 @@ complete custom operator workflow.
 
 ```console
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 migrate
-uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 catalog ingest --dataset-version convabuse-emnlp-full/default-v2
+uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 catalog ingest --dataset-version convabuse-emnlp-full/default-v3
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 template register
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 sample create --release-id RELEASE --template-id TEMPLATE --size 10 --seed 20260815
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 sample freeze --sample-id SAMPLE --out samples/repeat-01.json
@@ -100,6 +100,12 @@ tokenizer route, six reviewed prompt selectors, sampling and retry policies,
 master seed, voter count, fixed protocol versions, and execution class. Unknown
 fields and JSON type coercion are rejected before SQLite access. Running a run
 again resumes it; there is no resume command or model-visible resume marker.
+
+New ConvAbuse releases use `candidate-card/v2`, which shows all source messages
+in chronological `User`, `Model`, `User`, `Model` order. The committed v4 pilot
+used the historical two-message `candidate-card/v1`; its decisions did not use
+the complete context. It remains unchanged, and replacement generation is
+deferred to [issue #13](https://github.com/ananyasingh8/llm-rudeness-preferences/issues/13).
 
 ## Validation
 

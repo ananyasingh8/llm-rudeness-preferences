@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,6 +17,7 @@ from quadratic_voting.experiment.artifacts import (
     write_frozen_sample,
     write_sidecar,
 )
+from quadratic_voting.experiment.config import MatchedSetConfigV1
 from quadratic_voting.experiment.types import SamplerPolicy
 
 
@@ -93,6 +95,33 @@ class FrozenSampleTests(unittest.TestCase):
                         ValueError, "(?s)non-empty JSON array.*retry"
                     ):
                         read_frozen_sample(invalid)
+
+    def test_committed_v4_pilot_identity_artifacts_remain_byte_stable(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        expected = {
+            "quadratic_voting/data/qv-v4-acceptance.sqlite3": (
+                "b26c63f142a0075097281ff9e3531d205bf5d008277e4a7c9660284fb633efeb"
+            ),
+            "quadratic_voting/data/default-pilot-v4-acceptance/manifest.json": (
+                "7492cdc6e853f62f3a0ca30dbeb93b7b3671aa474e565efa6cdf4e63c2ece58e"
+            ),
+            "quadratic_voting/data/default-pilot-v4-acceptance/export/export-manifest.json": (
+                "5b0b0da35c41c97a702d188d7c59426b288680e30cf9a3bec1ba0355448fd198"
+            ),
+        }
+        for relative, digest in expected.items():
+            with self.subTest(relative=relative):
+                self.assertEqual(
+                    hashlib.sha256((root / relative).read_bytes()).hexdigest(), digest
+                )
+        historical_config = MatchedSetConfigV1.from_json_file(
+            root / "quadratic_voting/data/default-pilot-v4-acceptance/run-config.json"
+        )
+        self.assertEqual(
+            historical_config.sample.release.version,
+            "convabuse-emnlp-full/default-v2",
+        )
+        self.assertEqual(historical_config.sample.presentation_template.version, "v1")
 
 
 if __name__ == "__main__":

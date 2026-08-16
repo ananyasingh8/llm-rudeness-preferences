@@ -403,8 +403,8 @@ class ExperimentCliTests(unittest.TestCase):
                 writer.writerow(
                     {
                         "conv_id": "non-rude",
-                        "prev_agent": "",
-                        "prev_user": "",
+                        "prev_agent": "Previous helpful response",
+                        "prev_user": "Previous request",
                         "agent": "Helpful response",
                         "user": "Thank you",
                         "is_abuse.1": "1",
@@ -417,8 +417,8 @@ class ExperimentCliTests(unittest.TestCase):
                 writer.writerow(
                     {
                         "conv_id": "rude",
-                        "prev_agent": "",
-                        "prev_user": "",
+                        "prev_agent": "Previous unhelpful response",
+                        "prev_user": "Previous rude request",
                         "agent": "Unhelpful response",
                         "user": "Rude response",
                         "is_abuse.1": "0",
@@ -498,6 +498,23 @@ class ExperimentCliTests(unittest.TestCase):
                 [*prefix, "run", "--run-id", run_id], generator=True
             )
             self.assertIn("status=complete", first_run)
+            connection = sqlite3.connect(db)
+            model_visible_setup = json.loads(
+                connection.execute(
+                    "SELECT prompt_messages_json FROM model_call ORDER BY rowid LIMIT 1"
+                ).fetchone()[0]
+            )[0]["content"]
+            connection.close()
+            self.assertIn(
+                "User: Previous request\nModel: Previous helpful response\n"
+                "User: Thank you\nModel: Helpful response",
+                model_visible_setup,
+            )
+            self.assertIn(
+                "User: Previous rude request\nModel: Previous unhelpful response\n"
+                "User: Rude response\nModel: Unhelpful response",
+                model_visible_setup,
+            )
             replay = self._invoke([*prefix, "run", "--run-id", run_id], generator=True)
             self.assertIn("status=complete", replay)
             inspected = self._invoke(

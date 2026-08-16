@@ -59,8 +59,8 @@ from quadratic_voting.experiment.types import (
 )
 
 _PIPELINE_VERSION: Final[str] = "qv-default-pipeline/v1"
-_REVIEW_VERSION: Final[str] = "default-pilot-review/v1"
-_LABEL_POLICY_VERSION: Final[str] = "majority-severity-negative/v2"
+_REVIEW_VERSION: Final[str] = "default-pilot-review/v2"
+_LABEL_POLICY_VERSION: Final[str] = "majority-severity-negative-complete-context/v3"
 _DEFAULT_SEED: Final[int] = 20260815
 _MODEL_SNAPSHOT_FILES: Final[frozenset[str]] = frozenset(
     {
@@ -572,7 +572,7 @@ def _ensure_templates(args: argparse.Namespace, release_id: str) -> str:
                 )
             elif card["body_sha256"] != card_hash:
                 raise ValueError(
-                    "candidate-card/v1 hash drifted from the pipeline default"
+                    "candidate-card/v2 hash drifted from the pipeline default"
                 )
             else:
                 card_template_id = str(card["template_id"])
@@ -1222,7 +1222,7 @@ def register(
         type=Path,
         default=Path("emotion_probing/data/ConvAbuseEMNLPfull.csv"),
     )
-    run.add_argument("--dataset-version", default="convabuse-emnlp-full/default-v2")
+    run.add_argument("--dataset-version", default="convabuse-emnlp-full/default-v3")
     run.add_argument(
         "--output-dir",
         type=Path,
@@ -1231,7 +1231,7 @@ def register(
     run.add_argument(
         "--review-artifact",
         type=Path,
-        default=Path("quadratic_voting/DEFAULT_PILOT_REVIEW.md"),
+        default=Path("quadratic_voting/DEFAULT_PILOT_REVIEW_V2.md"),
     )
     run.add_argument("--sample-size", type=_positive, default=10)
     run.add_argument("--sample-seed", type=_seed, default=_DEFAULT_SEED)

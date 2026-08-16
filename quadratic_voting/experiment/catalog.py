@@ -26,14 +26,26 @@ from quadratic_voting.experiment.types import (
 class RudenessDerivationRule(StrEnum):
     """Versioned association-definition choices, not established ground truth."""
 
-    MAJORITY_SEVERITY_NEGATIVE = "majority-severity-negative/v2"
+    MAJORITY_SEVERITY_NEGATIVE_COMPLETE_CONTEXT = (
+        "majority-severity-negative-complete-context/v3"
+    )
 
 
 DEFAULT_PRESENTATION_TEMPLATE_BODY: Final[str] = (
-    "Candidate {candidate_id}\nAgent: {agent}\nUser: {user}"
+    "Candidate {candidate_id}\n"
+    "User: {prev_user}\n"
+    "Model: {prev_agent}\n"
+    "User: {user}\n"
+    "Model: {agent}"
 )
 DEFAULT_PRESENTATION_TEMPLATE_NAME: Final[str] = "candidate-card"
-DEFAULT_PRESENTATION_TEMPLATE_VERSION: Final[str] = "v1"
+DEFAULT_PRESENTATION_TEMPLATE_VERSION: Final[str] = "v2"
+_COMPLETE_CONTEXT_ROLES: Final[tuple[str, ...]] = (
+    "user",
+    "assistant",
+    "user",
+    "assistant",
+)
 
 _SEVERITY_COLUMNS: Final[tuple[str, ...]] = (
     "is_abuse.1",
@@ -87,7 +99,7 @@ def load_convabuse(
 ) -> tuple[CandidateRecord, ...]:
     """Collapse annotator rows into deterministic, normalized candidate records.
 
-    Under ``majority-severity-negative/v2``, negative severity annotations are
+    Under ``majority-severity-negative-complete-context/v3``, negative severity annotations are
     abusive. A strict negative majority is RUDE, a strict non-negative majority is
     NON_RUDE, and an exact tie is AMBIGUOUS_TIE.
     """
@@ -123,8 +135,27 @@ def load_convabuse(
                         "user",
                     )
                 )
-                if not normalized[-1]:
-                    continue
+                conversation_fields = (
+                    "prev_agent",
+                    "prev_user",
+                    "agent",
+                    "user",
+                )
+                blank_fields = tuple(
+                    column
+                    for column, value in zip(
+                        conversation_fields, normalized[1:], strict=True
+                    )
+                    if not value
+                )
+                if blank_fields:
+                    raise ValueError(
+                        f"ConvAbuse loading failed because CSV record {reader.line_num} has "
+                        f"blank required conversation fields {list(blank_fields)}. Validation "
+                        "failed in experiment.catalog.load_convabuse before grouping, so no "
+                        "malformed four-message candidate card can be persisted. Supply all "
+                        "prev_user, prev_agent, user, and agent message text, then retry."
+                    )
                 groups[normalized].append(row)
     except UnicodeDecodeError as error:
         raise ValueError(
@@ -135,7 +166,10 @@ def load_convabuse(
 
     records: list[CandidateRecord] = []
     for key, annotation_rows in groups.items():
-        if rule is not RudenessDerivationRule.MAJORITY_SEVERITY_NEGATIVE:
+        if (
+            rule
+            is not RudenessDerivationRule.MAJORITY_SEVERITY_NEGATIVE_COMPLETE_CONTEXT
+        ):
             raise AssertionError(f"unhandled closed rudeness derivation rule: {rule!r}")
         votes = tuple(
             vote
@@ -144,7 +178,12 @@ def load_convabuse(
         )
         if not votes:
             continue
-        turns = (("agent", key[3]), ("user", key[4]))
+        turns = (
+            ("user", key[2]),
+            ("assistant", key[1]),
+            ("user", key[4]),
+            ("assistant", key[3]),
+        )
         digest = _content_digest(turns)
         source_row_id = f"{key[0]}:{_group_digest(key)[:16]}"
         abusive_votes = sum(votes)
@@ -177,33 +216,58 @@ def load_convabuse(
     if not records:
         raise ValueError(
             f"ConvAbuse loading failed because {csv_path} produced zero candidates after "
-            "blank-user and invalid-annotation filtering. Validation failed in "
+            "invalid-annotation filtering. Validation failed in "
             "experiment.catalog.load_convabuse, so an empty release must not be ingested. "
-            "Check that the CSV has nonblank user turns and exactly one active severity "
+            "Check that the CSV has all four nonblank conversation turns and exactly one active severity "
             "one-hot value per annotation, then retry."
         )
     return tuple(records)
 
 
 def render_candidate_card(candidate_id: str, record: CandidateRecord, body: str) -> str:
-    """Render a neutral two-turn card without exposing the derived label."""
-    if len(record.turns) != 2:
+    """Render a neutral, chronologically complete card without derived labels."""
+    roles = tuple(role for role, _text in record.turns)
+    if roles != _COMPLETE_CONTEXT_ROLES:
         raise ValueError(
             f"Candidate-card rendering failed because candidate {candidate_id!r} has "
-            f"{len(record.turns)} turns instead of two. Validation failed in "
+            f"roles {roles!r}, not required chronological roles {_COMPLETE_CONTEXT_ROLES!r}. "
+            "Validation failed in "
             "experiment.catalog.render_candidate_card before model-visible text was frozen. "
-            "Re-ingest a normalized ConvAbuse candidate with one agent and one user turn."
+            "Re-ingest a normalized ConvAbuse candidate as user(prev_user), "
+            "assistant(prev_agent), user(user), assistant(agent)."
         )
-    (_, agent), (_, user) = record.turns
+    if any(not text.strip() for _role, text in record.turns):
+        raise ValueError(
+            f"Candidate-card rendering failed because candidate {candidate_id!r} has a blank "
+            "required conversation message. Validation failed in "
+            "experiment.catalog.render_candidate_card before model-visible text was frozen. "
+            "Re-ingest all four nonblank ConvAbuse conversation fields."
+        )
+    (
+        (_prev_user_role, prev_user),
+        (_prev_agent_role, prev_agent),
+        (_user_role, user),
+        (
+            _agent_role,
+            agent,
+        ),
+    ) = record.turns
     try:
-        return body.format(candidate_id=candidate_id, agent=agent, user=user)
+        return body.format(
+            candidate_id=candidate_id,
+            prev_user=prev_user,
+            prev_agent=prev_agent,
+            user=user,
+            agent=agent,
+        )
     except KeyError as error:
         missing = str(error.args[0])
         raise ValueError(
             f"Candidate-card rendering failed because template body requires unsupported "
             f"placeholder {missing!r}. Rendering failed in "
             "experiment.catalog.render_candidate_card before presentation persistence. Use "
-            "only {candidate_id}, {agent}, and {user} placeholders, then retry."
+            "only {candidate_id}, {prev_user}, {prev_agent}, {user}, and {agent} "
+            "placeholders, then retry."
         ) from error
 
 
@@ -212,7 +276,8 @@ def _existing_presentation_template(store: ExperimentStore) -> TemplateId:
         raise RuntimeError(
             "Candidate-card template reuse failed because this ExperimentStore does not expose "
             "the SQLite catalog query used by Stage 2. The failure occurred after release "
-            "ingestion while resolving candidate-card/v1. Use open_sqlite_store for catalog "
+            f"ingestion while resolving {DEFAULT_PRESENTATION_TEMPLATE_NAME}/"
+            f"{DEFAULT_PRESENTATION_TEMPLATE_VERSION}. Use open_sqlite_store for catalog "
             "ingestion or extend the store protocol with a template lookup operation."
         )
     connection = cast(_SqliteStoreView, store).connection
@@ -222,7 +287,7 @@ def _existing_presentation_template(store: ExperimentStore) -> TemplateId:
     ).fetchone()
     if row is None:
         raise RuntimeError(
-            "Candidate-card template reuse failed because candidate-card/v1 triggered a "
+            "Candidate-card template reuse failed because the current candidate-card version triggered a "
             "uniqueness conflict but no matching row was found. The catalog is inconsistent; "
             "inspect presentation_template and restore the database before retrying ingestion."
         )
@@ -291,7 +356,9 @@ def ingest_convabuse(
             label_policy_rule=(
                 "Negative severity annotations (-1,-2,-3) are abusive; RUDE requires a "
                 "strict majority of valid one-hot annotations; NON_RUDE requires a strict "
-                "non-negative majority; exact ties are AMBIGUOUS_TIE."
+                "non-negative majority; exact ties are AMBIGUOUS_TIE. Candidate conversation "
+                "context is normalized in chronological order as user(prev_user), "
+                "assistant(prev_agent), user(user), assistant(agent)."
             ),
         )
     except sqlite3.IntegrityError as error:

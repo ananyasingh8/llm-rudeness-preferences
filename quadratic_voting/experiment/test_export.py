@@ -102,7 +102,12 @@ class AnalysisFixture(unittest.TestCase):
                 CandidateRecord(
                     f"c{index}",
                     RudenessLabel.RUDE if index == 1 else RudenessLabel.NON_RUDE,
-                    (("user", f"u{index}"), ("agent", f"a{index}")),
+                    (
+                        ("user", f"previous-user-{index}"),
+                        ("assistant", f"previous-model-{index}"),
+                        ("user", f"current-user-{index}"),
+                        ("assistant", f"current-model-{index}"),
+                    ),
                     str(index) * 64,
                     (
                         SourceAnnotation(
@@ -393,7 +398,7 @@ class ExportTests(AnalysisFixture):
     def test_hand_calculated_agreement_and_sign(self) -> None:
         export_dir = self.root / "exports"
         manifest = export_parquet(self.export_store, export_dir)
-        self.assertEqual(len(manifest.files), len(ExportDataset) + 18)
+        self.assertEqual(len(manifest.files), len(ExportDataset) + 19)
         pairs = pq.read_table(
             export_dir / "preference_action_pairs.parquet"
         ).to_pylist()
@@ -581,6 +586,7 @@ class ExportTests(AnalysisFixture):
                 "rendered_text",
                 "rendered_sha256",
             },
+            "candidate_source_turns": {"turn_index", "role", "text", "content_sha256"},
             "voter_permutations": {
                 "permutation_seed",
                 "permutation_algorithm",
@@ -672,7 +678,33 @@ class ExportTests(AnalysisFixture):
         self.assertEqual(len(presentations), 3)
         self.assertEqual(
             {row["candidate_id"]: row["rendered_text"] for row in presentations},
-            dict(zip(map(str, self.candidates), ("u1", "u2", "u3"), strict=True)),
+            dict(
+                zip(
+                    map(str, self.candidates),
+                    ("previous-user-1", "previous-user-2", "previous-user-3"),
+                    strict=True,
+                )
+            ),
+        )
+        source_turns = pq.read_table(
+            export_dir / "candidate_source_turns.parquet"
+        ).to_pylist()
+        first_candidate_turns = [
+            row
+            for row in source_turns
+            if row["candidate_id"] == str(self.candidates[0])
+        ]
+        self.assertEqual(
+            [
+                (row["turn_index"], row["role"], row["text"])
+                for row in first_candidate_turns
+            ],
+            [
+                (0, "user", "previous-user-1"),
+                (1, "assistant", "previous-model-1"),
+                (2, "user", "current-user-1"),
+                (3, "assistant", "current-model-1"),
+            ],
         )
         permutations = pq.read_table(
             export_dir / "voter_permutations.parquet"
@@ -699,7 +731,7 @@ class ExportTests(AnalysisFixture):
         self.assertEqual([row["position"] for row in positioned], [0, 1, 2])
         self.assertEqual(
             [presentation_by_candidate[row["candidate_id"]] for row in positioned],
-            ["u2", "u1", "u3"],
+            ["previous-user-2", "previous-user-1", "previous-user-3"],
         )
         configs = pq.read_table(
             export_dir / "experiment_configurations.parquet"

@@ -82,7 +82,7 @@ class CatalogSampleCliTests(unittest.TestCase):
             connection = sqlite3.connect(db)
             template_id = connection.execute(
                 "SELECT template_id FROM presentation_template WHERE name='candidate-card' "
-                "AND version='v1'"
+                "AND version='v2'"
             ).fetchone()[0]
             connection.close()
             sample_output = invoke(

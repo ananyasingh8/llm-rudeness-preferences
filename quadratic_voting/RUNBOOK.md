@@ -24,8 +24,8 @@ The command performs the complete dependency chain:
 
 1. Creates and migrates `quadratic_voting/data/qv.sqlite3`.
 2. Ingests the repository ConvAbuse CSV with
-   `majority-severity-negative/v2`.
-3. Registers candidate-card `v1` and instruction-template `v4`.
+   `majority-severity-negative-complete-context/v3`.
+3. Registers candidate-card `v2` and instruction-template `v4`.
 4. Creates and freezes a 10-candidate balanced sample with seed `20260815`.
 5. Binds the repository-tracked default review artifact.
 6. Creates the strict run config and all six matched conditions.
@@ -46,6 +46,18 @@ checked again on every resume.
 The default is a real GPU pilot, not a fixture. It may take substantial time and
 requires access to Google's gated Gemma checkpoint. Authenticate with the
 Hugging Face Hub before starting when the checkpoint is not already cached.
+
+### Historical v4 pilot
+
+`quadratic_voting/data/qv-v4-acceptance.sqlite3` and
+`quadratic_voting/data/default-pilot-v4-acceptance/` are immutable historical
+artifacts. They used `convabuse-emnlp-full/default-v2` and `candidate-card/v1`,
+which exposed only assistant → user text; their model decisions did **not** use
+the corrected four-message context. Do not relabel, edit, pool, or directly
+compare those results as complete-context results. A new release, sample, and
+six-condition run are deferred to
+[GitHub issue #13](https://github.com/ananyasingh8/llm-rudeness-preferences/issues/13)
+and require explicit authorization before any model download or inference.
 
 The remainder of this document explains every stage and the lower-level commands
 for custom experiments, auditing, and recovery.
@@ -108,8 +120,8 @@ uv run python -m quadratic_voting.experiment.cli \
   --db "$QV_DB" \
   catalog ingest \
   --dataset-path emotion_probing/data/ConvAbuseEMNLPfull.csv \
-  --dataset-version convabuse-emnlp-full/default-v2 \
-  --rule majority-severity-negative/v2
+  --dataset-version convabuse-emnlp-full/default-v3 \
+  --rule majority-severity-negative-complete-context/v3
 ```
 
 The command prints:
@@ -122,8 +134,9 @@ Ingestion performs the following operations once for the release:
 
 - Normalizes and groups annotation rows for each candidate interaction.
 - Creates one candidate ULID for each interaction.
-- Persists the current agent and user turns, source identity, content hash, and
-  source annotations.
+- Persists all four source turns in chronological order: `user(prev_user)`,
+  `assistant(prev_agent)`, `user(user)`, `assistant(agent)`, plus source
+  identity, content hash, and source annotations.
 - Assigns `rude` when negative severities have a strict majority.
 - Assigns `non_rude` when non-negative severities have a strict majority.
 - Assigns `ambiguous_tie` when the two groups tie exactly.
@@ -211,7 +224,7 @@ ordering change.
 ## 6. Record Review Approval
 
 Pilot and primary runs require reviewed label-policy and prompt-profile
-metadata. Review the exact `majority-severity-negative/v2` policy, the current
+metadata. Review the exact `majority-severity-negative-complete-context/v3` policy, the current
 template bodies in `quadratic_voting/experiment/transcript.py`, and their effect
 on the intended experiment before approving them.
 
@@ -245,11 +258,11 @@ try:
             review_version,
             review_sha256,
             "convabuse-rudeness",
-            "majority-severity-negative/v2",
+            "majority-severity-negative-complete-context/v3",
         ),
     )
     if cursor.rowcount != 1:
-        raise RuntimeError("expected exactly one v2 ConvAbuse label policy row")
+        raise RuntimeError("expected exactly one v3 complete-context ConvAbuse label policy row")
     connection.commit()
 finally:
     connection.close()
@@ -282,13 +295,13 @@ unknown fields.
     "release": {
       "release_id": "RELEASE_ID",
       "dataset_name": "ConvAbuse",
-      "version": "convabuse-emnlp-full/default-v2",
+      "version": "convabuse-emnlp-full/default-v3",
       "expected_sha256": "SOURCE_CSV_SHA256"
     },
     "label_policy": {
       "label_policy_id": "LABEL_POLICY_ID",
       "name": "convabuse-rudeness",
-      "version": "majority-severity-negative/v2",
+      "version": "majority-severity-negative-complete-context/v3",
       "expected_sha256": "LABEL_RULE_SHA256",
       "reviewed": true,
       "review_version": "user-approval/YYYY-MM-DD",
@@ -297,7 +310,7 @@ unknown fields.
     "presentation_template": {
       "template_id": "CARD_TEMPLATE_ID",
       "name": "candidate-card",
-      "version": "v1",
+      "version": "v2",
       "expected_sha256": "CARD_TEMPLATE_SHA256"
     }
   },

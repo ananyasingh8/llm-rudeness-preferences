@@ -15,11 +15,16 @@ import json
 import math
 from pathlib import Path
 
-from bail.prompts.bail_methods import GREEN, SHUFFLE
-from bail_steering.main import (
-    BASELINE_CONDITION,
-    RESPONSES_FILE,
-    RESULTS_DIR,
+from bail.prompts.bail_methods import GREEN, SHUFFLE, remove_thinking
+
+# Mirrored from bail_steering.main, which cannot be imported here: it pulls
+# GPU-only dependencies absent on analysis-only machines.
+RESULTS_DIR = Path(__file__).parent / "results"
+RESPONSES_FILE = "responses.csv"
+BASELINE_CONDITION = "baseline"
+TOOL_CALL_MARKERS = (
+    '"name": "switchconversation_tool"',
+    "call:switchconversation_tool",
 )
 from emotion_probing.analyze.common import (
     BASELINE,
@@ -28,6 +33,9 @@ from emotion_probing.analyze.common import (
     GRID,
     INK,
     MUTED,
+    SERIES_1,
+    SERIES_2,
+    SERIES_3,
     SURFACE,
     get_matplotlib,
     save_figure,
@@ -35,6 +43,20 @@ from emotion_probing.analyze.common import (
 )
 
 GROUP_ORDER = ("friendly", "neutral", "rude")
+SEVERITY_ORDER = ("1", "0", "-1", "-2", "-3")
+SEVERITY_TICKS = (
+    "1\nfriendly",
+    "0\nneutral",
+    "-1\nmild",
+    "-2\nstrong",
+    "-3\nvery strong",
+)
+# The three bail elicitation variants: (phase, ordering, label, color).
+BAIL_METHODS = (
+    ("prompt", "bail_first", "prompt — bail option first", SERIES_1),
+    ("prompt", "continue_first", "prompt — continue option first", SERIES_2),
+    ("tool", "", "tool call", SERIES_3),
+)
 
 
 def load_condition_lists(run_dir: Path) -> tuple[list[str], list[str], list[str]]:
@@ -89,7 +111,11 @@ def is_bail(row: dict[str, str]) -> bool | None:
         if row["wellbeing"] == GREEN:
             return False
         return None
-    return row["tool_called"] == "True"
+    # Recompute tool calls from the raw text rather than trusting the stored
+    # flag: early runs only scanned for the OpenAI-style JSON shape and
+    # missed Gemma's "call:<name>{...}" syntax.
+    cleaned = remove_thinking(row["response_text"])
+    return any(marker in cleaned for marker in TOOL_CALL_MARKERS)
 
 
 def rate_stats(rows: list[dict[str, str]]) -> dict[str, float]:
@@ -99,6 +125,95 @@ def rate_stats(rows: list[dict[str, str]]) -> dict[str, float]:
     rate = sum(verdicts) / n if n else 0.0
     sem = math.sqrt(rate * (1 - rate) / n) if n else 0.0
     return {"n_total": len(rows), "n_parsed": n, "rate": rate, "sem": sem}
+
+
+def _method_rates(
+    rows: list[dict[str, str]], phase: str, ordering: str
+) -> tuple[list[float], list[float]]:
+    """Bail rate and SEM per severity band for one elicitation method.
+
+    Aggregates over however many samples exist per conversation (runs with
+    repeated randomized samples simply contribute more rows per cell; the
+    SEM treats them as independent generations).
+    """
+    rates, sems = [], []
+    for band in SEVERITY_ORDER:
+        subset = [
+            r
+            for r in rows
+            if r["phase"] == phase
+            and (phase == "tool" or r["ordering"] == ordering)
+            and r["abuse_severity"] == band
+        ]
+        stats = rate_stats(subset)
+        rates.append(stats["rate"] if stats["n_parsed"] else float("nan"))
+        sems.append(stats["sem"])
+    return rates, sems
+
+
+def severity_chart(
+    plt, rows: list[dict[str, str]], condition: str, path: Path
+) -> None:
+    """Bail rate per severity band for one condition, one line per method.
+
+    When baseline data exists, each method also gets a dotted line showing
+    the unsteered baseline rate for direct comparison.
+    """
+    condition_rows = [r for r in rows if r["condition"] == condition]
+    baseline_rows = [r for r in rows if r["condition"] == BASELINE_CONDITION]
+    show_baseline = condition != BASELINE_CONDITION and bool(baseline_rows)
+    figure, axes = styled_axes(plt, 7.0, 4.4)
+    x = list(range(len(SEVERITY_ORDER)))
+    for phase, ordering, label, color in BAIL_METHODS:
+        if show_baseline:
+            base_rates, _ = _method_rates(baseline_rows, phase, ordering)
+            axes.plot(
+                x,
+                base_rates,
+                color=color,
+                linewidth=1.5,
+                linestyle=(0, (3, 3)),
+                alpha=0.85,
+            )
+        rates, sems = _method_rates(condition_rows, phase, ordering)
+        axes.errorbar(
+            x,
+            rates,
+            yerr=sems,
+            color=color,
+            linewidth=2,
+            marker="o",
+            markersize=7,
+            markeredgecolor=SURFACE,
+            markeredgewidth=1.5,
+            ecolor=MUTED,
+            elinewidth=1,
+            label=label,
+        )
+    if show_baseline:
+        axes.plot(
+            [], [], color=MUTED, linewidth=1.5, linestyle=(0, (3, 3)),
+            label="dotted: unsteered baseline",
+        )
+    axes.set_xticks(x, SEVERITY_TICKS)
+    axes.set_xlim(-0.35, len(SEVERITY_ORDER) - 0.65)
+    axes.set_ylim(bottom=0)
+    axes.yaxis.grid(True, color=GRID, linewidth=0.8)
+    axes.set_xlabel("ConvAbuse severity band", color=MUTED)
+    axes.set_ylabel("bail rate", color=MUTED)
+    axes.legend(frameon=False, labelcolor=INK, loc="upper left", fontsize=9)
+    steering = (
+        "no steering"
+        if condition == BASELINE_CONDITION
+        else f"steering: {condition}"
+    )
+    axes.set_title(
+        f"Bail rate by conversation severity — {steering}",
+        color=INK,
+        loc="left",
+        pad=12,
+    )
+    save_figure(plt, figure, path)
 
 
 def condition_color(condition: str, risers: list[str], fallers: list[str]) -> str:
@@ -258,6 +373,17 @@ def main() -> None:
     plt = get_matplotlib()
     if plt is None:
         return
+    # Per-condition severity profiles: the three bail methods across bands.
+    present = sorted(
+        {r["condition"] for r in rows},
+        key=lambda c: order.index(c) if c in order else len(order),
+    )
+    for condition in present:
+        severity_chart(
+            plt, rows, condition,
+            out_dir / "conditions" / f"{condition.replace(' ', '_')}_by_severity.png",
+        )
+
     if stats_by_phase["prompt"]:
         rate_chart(
             plt, stats_by_phase["prompt"], "prompt",

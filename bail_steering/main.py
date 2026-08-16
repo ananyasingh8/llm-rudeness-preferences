@@ -123,6 +123,14 @@ STEER_FALLERS: tuple[str, ...] | None = (
 BASELINE_CONDITION = "baseline"
 VECTORS_PREFIX = "gemma4-e4b-it"  # npz prefix written by the extraction
 
+# Inline tool-call shapes seen in raw generations: the bail paper's
+# OpenAI-style JSON scan, plus Gemma's own "call:<name>{...}" syntax
+# (observed in the first E4B run; the strict JSON scan alone missed it).
+TOOL_CALL_MARKERS = (
+    '"name": "switchconversation_tool"',
+    "call:switchconversation_tool",
+)
+
 PHASES = ("prompt", "tool")
 BAIL_MODEL_NAME = "Gemma"  # own-model name in the bail tool text (bail/config.py)
 MAX_NEW_TOKENS = 1000  # matches bail/config.py BAIL_MAX_TOKENS
@@ -391,9 +399,7 @@ def parse_response(phase: str, text: str) -> dict[str, str]:
             "tool_mentioned": "",
         }
     cleaned = remove_thinking(text)
-    # The paper's text-scan for an OpenAI-style inline call, plus a lenient
-    # mention flag so analysis can audit other call syntaxes in the raw text.
-    called = f'"name": "{BAIL_TOOL_NAME}"' in cleaned
+    called = any(marker in cleaned for marker in TOOL_CALL_MARKERS)
     return {
         "wellbeing": "",
         "tool_called": str(called),

@@ -9,7 +9,7 @@
 set -euo pipefail
 
 EXPERIMENT="${EXPERIMENT:-convabuse-31b}"
-MODEL_CACHE_DIR="${MODEL_CACHE_DIR:-${SCRATCH:?SCRATCH is not set}/huggingface}"
+MODEL_CACHE_DIR="${MODEL_CACHE_DIR:-/project/def-nvincent/dhpham/cache/models}"
 PYTHON_MODULE="${PYTHON_MODULE:-python/3.12}"
 LIMIT="${LIMIT:-}"
 RESUME="${RESUME:-0}"

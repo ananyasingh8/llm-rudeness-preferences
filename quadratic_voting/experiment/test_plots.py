@@ -18,24 +18,29 @@ from quadratic_voting.experiment.plots import (
     ARM_ORDER,
     PALETTE,
     PLOT_MANIFEST_VERSION,
+    REGIME_LINESTYLE,
     REGIME_ORDER,
     build_plot_figures,
     build_plot_manifest,
     render_plots,
 )
+from quadratic_voting.experiment.plots import (
+    _severity_palette_manifest,
+)
 from quadratic_voting.experiment.store import open_sqlite_store
 from quadratic_voting.experiment.test_export import AnalysisFixture
 
 
+SEVERITY_PALETTE_MANIFEST = _severity_palette_manifest()
+
+
 EXPECTED = {
     "preference_action_agreement.png",
-    "candidate_survival.png",
     "run_quality.png",
-    "round_trajectories.png",
-    "survival_by_severity.png",
-    "net_votes_by_severity.png",
-    "ranking_over_rounds.png",
     "vote_share_by_severity.png",
+    "net_votes_by_severity.png",
+    "candidate_survival.png",
+    "round_trajectories.png",
     "pooled_by_severity.parquet",
     "timeline.html",
 }
@@ -66,6 +71,9 @@ class FixturePlotTests(AnalysisFixture):
         manifest = build_plot_manifest(export_dir)
         self.assertEqual(manifest["version"], PLOT_MANIFEST_VERSION)
         self.assertEqual(manifest["palette"], PALETTE)
+        # Shared style is exposed in the manifest with JSON-safe string keys.
+        self.assertEqual(manifest["severity_palette"], SEVERITY_PALETTE_MANIFEST)
+        self.assertEqual(manifest["regime_linestyle"], REGIME_LINESTYLE)
         plots = manifest["plots"]
         assert isinstance(plots, dict)
         agreement = plots["preference_action_agreement"]
@@ -84,6 +92,7 @@ class FixturePlotTests(AnalysisFixture):
         )
         figures = build_plot_figures(manifest)
         try:
+            # figures[0] — agreement (unchanged bar chart)
             agreement_axis = figures[0][1].axes[0]
             self.assertEqual(agreement_axis.get_ylim(), (-1.0, 1.0))
             self.assertEqual(
@@ -104,36 +113,9 @@ class FixturePlotTests(AnalysisFixture):
                 ],
                 [color.lower() for color in agreement["colors"]],
             )
-            survival = plots["candidate_survival"]
-            survival_axis = figures[1][1].axes[0]
-            self.assertEqual(survival_axis.get_title(), survival["title"])
-            self.assertEqual(survival_axis.get_xlabel(), survival["x_label"])
-            self.assertEqual(survival_axis.get_ylabel(), survival["y_label"])
-            self.assertEqual(survival_axis.get_ylim(), tuple(survival["y_limits"]))
-            self.assertEqual(
-                [
-                    list(cast(Sequence[float], line.get_xdata()))
-                    for line in survival_axis.lines
-                ],
-                [series["x"] for series in survival["series"]],
-            )
-            self.assertEqual(
-                [
-                    list(cast(Sequence[float], line.get_ydata()))
-                    for line in survival_axis.lines
-                ],
-                [series["y"] for series in survival["series"]],
-            )
-            self.assertEqual(
-                [to_hex(line.get_color()) for line in survival_axis.lines],
-                [series["color"].lower() for series in survival["series"]],
-            )
-            self.assertEqual(
-                [line.get_linestyle() for line in survival_axis.lines],
-                [series["linestyle"] for series in survival["series"]],
-            )
+            # figures[1] — run_quality (reliability stack + error-code bars)
             quality = plots["run_quality"]
-            quality_left, quality_right = figures[2][1].axes
+            quality_left, quality_right = figures[1][1].axes
             self.assertEqual(
                 [cast(Rectangle, patch).get_height() for patch in quality_left.patches],
                 [
@@ -149,28 +131,47 @@ class FixturePlotTests(AnalysisFixture):
                 ],
                 quality["error_codes"]["counts"],
             )
+            # figures[2] — vote share: one line per (severity, regime); color =
+            # severity, linestyle = regime; y in [0, 1].
+            vote_share = plots["vote_share_by_severity"]
+            vote_axis = figures[2][1].axes[0]
+            self.assertEqual(vote_axis.get_ylim(), (0.0, 1.0))
+            self.assertEqual(vote_axis.get_ylabel(), vote_share["y_label"])
+            vote_series = vote_share["series"]
+            data_lines = [
+                line
+                for line in vote_axis.lines
+                if len(cast("Sequence[float]", line.get_xdata())) > 0
+            ]
+            self.assertEqual(len(data_lines), len(vote_series))
+            self.assertEqual(
+                [to_hex(line.get_color()) for line in data_lines],
+                [series["color"].lower() for series in vote_series],
+            )
+            self.assertEqual(
+                [line.get_linestyle() for line in data_lines],
+                [series["linestyle"] for series in vote_series],
+            )
+            # figures[4] — candidate survival: left pooled + right per-run panels.
+            survival = plots["candidate_survival"]
+            survival_left, survival_right = figures[4][1].axes
+            self.assertEqual(survival_left.get_title(), survival["pooled"]["title"])
+            self.assertEqual(survival_right.get_title(), survival["per_run"]["title"])
+            # figures[5] — round trajectories: left pooled + right per-run panels.
             trajectory = plots["round_trajectories"]
-            left, right = figures[3][1].axes
-            self.assertEqual(left.get_title(), trajectory["titles"][0])
-            self.assertEqual(right.get_title(), trajectory["titles"][1])
+            traj_left, traj_right = figures[5][1].axes
+            self.assertEqual(traj_left.get_title(), trajectory["pooled"]["title"])
+            self.assertEqual(traj_right.get_title(), trajectory["per_run"]["title"])
+            per_run_series = trajectory["per_run"]["series"]
+            traj_data_lines = [
+                line
+                for line in traj_right.lines
+                if len(cast("Sequence[float]", line.get_xdata())) > 0
+            ]
+            self.assertEqual(len(traj_data_lines), len(per_run_series))
             self.assertEqual(
-                [list(cast(Sequence[float], line.get_xdata())) for line in left.lines],
-                [series["x"] for series in trajectory["series"]],
-            )
-            self.assertEqual(
-                [list(cast(Sequence[float], line.get_ydata())) for line in left.lines],
-                [series["active_pool_size"] for series in trajectory["series"]],
-            )
-            self.assertEqual(
-                [line.get_linestyle() for line in left.lines],
-                [
-                    "-" if series["regime"] == "support" else "--"
-                    for series in trajectory["series"]
-                ],
-            )
-            self.assertEqual(
-                [to_hex(line.get_color()) for line in left.lines],
-                [series["color"].lower() for series in trajectory["series"]],
+                [line.get_linestyle() for line in traj_data_lines],
+                [series["linestyle"] for series in per_run_series],
             )
         finally:
             import matplotlib.pyplot as plt

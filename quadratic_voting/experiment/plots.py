@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import tempfile
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -14,9 +15,12 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 import pyarrow as pa  # type: ignore[import-untyped]  # noqa: E402
 import pyarrow.parquet as pq  # type: ignore[import-untyped]  # noqa: E402
+from matplotlib.colors import to_hex  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
 
 from quadratic_voting.experiment import pooled  # noqa: E402
 from quadratic_voting.experiment.timeline_flow import render_export_timeline  # noqa: E402
@@ -33,48 +37,34 @@ PALETTE = {
 }
 ARM_ORDER = ("action-only", "statement-then-action", "action-then-statement")
 REGIME_ORDER = ("support", "opposition")
+NEUTRAL_COLOR = "#79706E"
+
+# Shared severity/regime style. Severity is encoded as *color* (blue = least
+# rude … red = most rude); regime is encoded as *linestyle*. Palette keys are
+# ints in code; the manifest exposes STRING keys so it round-trips through JSON.
+SEVERITY_PALETTE: dict[int, str] = {
+    1: "#2166AC",
+    0: "#67A9CF",
+    -1: "#F4A582",
+    -2: "#D6604D",
+    -3: "#B2182B",
+}
+REGIME_LINESTYLE: dict[str, str] = {"support": "-", "opposition": "--"}
+# Regime marker for the per-run candidate-survival scatter (secondary cue to the
+# x-axis run labels; color still carries severity).
+REGIME_MARKER: dict[str, str] = {"support": "o", "opposition": "s"}
+_REGIME_SHORT = {"support": "sup", "opposition": "opp"}
+
 PLOT_FILES = (
     "preference_action_agreement.png",
-    "candidate_survival.png",
     "run_quality.png",
+    "vote_share_by_severity.png",
+    "net_votes_by_severity.png",
+    "candidate_survival.png",
     "round_trajectories.png",
 )
 POOLED_PARQUET_FILE = "pooled_by_severity.parquet"
-POOLED_REGIME_COLOR = {"support": "#4C78A8", "opposition": "#E45756"}
-# One color per severity level for the ranking bump chart.
-SEVERITY_COLOR = {
-    1: "#54A24B",
-    0: "#79706E",
-    -1: "#F58518",
-    -2: "#E45756",
-    -3: "#B279A2",
-}
-# (metric value, output filename, title, y-axis label) for the pooled bar plots.
-POOLED_METRIC_SPECS = (
-    (
-        pooled.PooledMetric.SURVIVAL_ROUNDS.value,
-        "survival_by_severity.png",
-        "Candidate survival by severity level",
-        "Mean rounds survived (mean ± 95% t·SEM over repeats)",
-    ),
-    (
-        pooled.PooledMetric.NET_SIGNED_VOTES.value,
-        "net_votes_by_severity.png",
-        "Net signed votes by severity level",
-        "Mean net signed votes  (+ keep / − remove)",
-    ),
-)
-RANKING_FILE = "ranking_over_rounds.png"
-VOTE_SHARE_FILE = "vote_share_by_severity.png"
 SEVERITY_AXIS_LABEL = "Severity level  (1 = least rude … −3 = most rude)"
-
-
-def _safe_vote_share(export_dir: Path) -> list[dict[str, object]]:
-    try:
-        return pooled.vote_share_by_severity(export_dir)
-    except FileNotFoundError:
-        return []
-
 
 RELIABILITY_METRICS = (
     "invalid_attempts",
@@ -86,7 +76,15 @@ RELIABILITY_METRICS = (
 )
 RELIABILITY_COLORS = ("#E45756", "#F58518", "#79706E", "#B279A2", "#9D755D", "#BAB0AC")
 REGIME_TICK_COLOR = {"support": "#2E5A88", "opposition": "#A22F2E"}
-_REGIME_SHORT = {"support": "sup", "opposition": "opp"}
+
+
+def _severity_color(level: int) -> str:
+    return SEVERITY_PALETTE.get(level, NEUTRAL_COLOR)
+
+
+def _severity_palette_manifest() -> dict[str, str]:
+    """String-keyed severity palette for the JSON-round-trip-safe manifest."""
+    return {str(level): color for level, color in SEVERITY_PALETTE.items()}
 
 
 def _quality_label(row: Mapping[str, object]) -> str:
@@ -138,11 +136,19 @@ def _safe_pooled_rows(export_dir: Path) -> list[dict[str, object]]:
         return []
 
 
-def _safe_rank_records(export_dir: Path) -> list[dict[str, object]]:
+def _safe_vote_share(export_dir: Path) -> list[dict[str, object]]:
     try:
-        return pooled.rank_records_by_severity(export_dir)
+        return pooled.vote_share_by_severity(export_dir)
     except FileNotFoundError:
         return []
+
+
+def _safe_severity_by_candidate(export_dir: Path) -> dict[str, int]:
+    try:
+        rows = _rows(export_dir, "source_annotations")
+    except FileNotFoundError:
+        return {}
+    return pooled.severity_level_by_candidate(rows)
 
 
 def _as_int(value: object) -> int:
@@ -167,8 +173,21 @@ def _rows(export_dir: Path, name: str) -> list[dict[str, object]]:
     return pq.read_table(export_dir / f"{name}.parquet").to_pylist()
 
 
-def build_plot_manifest(export_dir: Path) -> dict[str, object]:
-    """Build the normalized data/order/label/style contract used by rendering."""
+def _mean_sem(values: Sequence[float]) -> tuple[float, float]:
+    """Mean and standard error of the mean (0 when fewer than two values)."""
+    array = np.asarray(values, dtype=float)
+    n = int(array.size)
+    mean = float(array.mean())
+    if n < 2:
+        return mean, 0.0
+    return mean, float(array.std(ddof=1) / np.sqrt(n))
+
+
+def _repeat_index(row: Mapping[str, object]) -> int:
+    return _as_int(row.get("seed_repeat_index", 0))
+
+
+def _agreement_section(export_dir: Path) -> dict[str, object]:
     agreement_rows = [
         row
         for row in _rows(export_dir, "preference_action_summary")
@@ -192,11 +211,21 @@ def build_plot_manifest(export_dir: Path) -> dict[str, object]:
             REGIME_ORDER.index(item[3]),
         ),
     )
+    return {
+        "categories": [
+            f"{matched}\nr{round_index}\n{arm}\n{regime}"
+            for matched, round_index, arm, regime in agreement_categories
+        ],
+        "values": [agreement_by_category[item] for item in agreement_categories],
+        "colors": [PALETTE[arm] for _, _, arm, _ in agreement_categories],
+        "title": "Preference–action agreement (joint arms only)",
+        "y_label": "Mean within-voter-round Spearman rho",
+        "y_limits": [-1.0, 1.0],
+        "estimand": "association",
+    }
 
-    survival_rows = sorted(
-        _rows(export_dir, "candidate_survival"),
-        key=lambda row: (str(row["run_id"]), str(row["candidate_id"])),
-    )
+
+def _run_quality_section(export_dir: Path) -> dict[str, object]:
     quality_rows = sorted(
         _rows(export_dir, "run_quality"),
         key=lambda row: (
@@ -207,111 +236,56 @@ def build_plot_manifest(export_dir: Path) -> dict[str, object]:
             str(row["run_id"]),
         ),
     )
-    trajectory_rows = sorted(
-        _rows(export_dir, "round_trajectories"),
-        key=lambda row: (str(row["run_id"]), _as_int(row["round_index"])),
-    )
     return {
-        "version": PLOT_MANIFEST_VERSION,
-        "style": PLOT_STYLE,
-        "palette": PALETTE,
-        "pooled_by_severity": _safe_pooled_rows(export_dir),
-        "rank_trajectories": _safe_rank_records(export_dir),
-        "vote_share_by_severity": _safe_vote_share(export_dir),
-        "plots": {
-            "preference_action_agreement": {
-                "categories": [
-                    f"{matched}\nr{round_index}\n{arm}\n{regime}"
-                    for matched, round_index, arm, regime in agreement_categories
-                ],
-                "values": [
-                    agreement_by_category[item] for item in agreement_categories
-                ],
-                "colors": [PALETTE[arm] for _, _, arm, _ in agreement_categories],
-                "title": "Preference–action agreement (joint arms only)",
-                "y_label": "Mean within-voter-round Spearman rho",
-                "y_limits": [-1.0, 1.0],
-                "estimand": "association",
-            },
-            "candidate_survival": {
-                "series": [
-                    {
-                        "label": f"{row['run_id']}:{row['candidate_id']}",
-                        "x": [
-                            _as_int(value)
-                            for value in _as_sequence(row["round_indices"])
-                        ],
-                        "y": [1] * len(_as_sequence(row["round_indices"])),
-                        "color": PALETTE[str(row["arm"])],
-                        "linestyle": "-" if row["regime"] == "support" else "--",
-                    }
-                    for row in survival_rows
-                ],
-                "title": "Candidate survival curves",
-                "x_label": "Round",
-                "y_label": "Active in round",
-                "y_limits": [0.0, 1.05],
-            },
-            "run_quality": {
-                "categories": [_quality_label(row) for row in quality_rows],
-                "regimes": [str(row["regime"]) for row in quality_rows],
-                "reliability_metrics": {
-                    metric: [_as_int(row[metric]) for row in quality_rows]
-                    for metric in RELIABILITY_METRICS
-                },
-                "error_codes": _error_code_breakdown(quality_rows),
-                "titles": [
-                    "Reliability per run (repeat · regime)",
-                    "Invalid-attempt error codes (all runs)",
-                ],
-            },
-            "round_trajectories": {
-                "series": [
-                    {
-                        "run_id": run_id,
-                        "arm": rows[0]["arm"],
-                        "regime": rows[0]["regime"],
-                        "x": [_as_int(row["round_index"]) for row in rows],
-                        "active_pool_size": [
-                            _as_int(row["active_pool_size"]) for row in rows
-                        ],
-                        "total_votes": [_as_int(row["total_votes"]) for row in rows],
-                        "max_votes": [_as_int(row["max_votes"]) for row in rows],
-                        "color": PALETTE[str(rows[0]["arm"])],
-                    }
-                    for run_id, rows in _group_trajectories(trajectory_rows)
-                ],
-                "titles": ["Active pool size", "Allocation distribution"],
-                "x_label": "Round",
-            },
+        "categories": [_quality_label(row) for row in quality_rows],
+        "regimes": [str(row["regime"]) for row in quality_rows],
+        "reliability_metrics": {
+            metric: [_as_int(row[metric]) for row in quality_rows]
+            for metric in RELIABILITY_METRICS
         },
+        "error_codes": _error_code_breakdown(quality_rows),
+        "titles": [
+            "Reliability per run (repeat · regime)",
+            "Invalid-attempt error codes (all runs)",
+        ],
     }
 
 
-def _group_trajectories(
-    rows: Sequence[Mapping[str, object]],
-) -> list[tuple[str, list[Mapping[str, object]]]]:
-    groups: dict[str, list[Mapping[str, object]]] = {}
-    for row in rows:
-        groups.setdefault(str(row["run_id"]), []).append(row)
-    return [(run_id, groups[run_id]) for run_id in sorted(groups)]
+def _vote_share_section(records: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    """One line per (severity_level, regime): color = severity, style = regime."""
+    series: list[dict[str, object]] = []
+    for row in records:
+        level = _as_int(row["severity_level"])
+        regime = str(row["regime"])
+        series.append(
+            {
+                "severity_level": level,
+                "regime": regime,
+                "x": [_as_float(value) for value in _as_sequence(row["rounds"])],
+                "y": [_as_float(value) for value in _as_sequence(row["mean"])],
+                "ci_lower": [
+                    _as_float(value) for value in _as_sequence(row["ci_lower"])
+                ],
+                "ci_upper": [
+                    _as_float(value) for value in _as_sequence(row["ci_upper"])
+                ],
+                "color": _severity_color(level),
+                "linestyle": REGIME_LINESTYLE.get(regime, "-"),
+            }
+        )
+    return {
+        "series": series,
+        "title": "Mean vote share by severity per round",
+        "x_label": "Round",
+        "y_label": "Mean vote share (95% t·SEM)",
+        "y_limits": [0.0, 1.0],
+    }
 
 
-def _empty(axis: plt.Axes, message: str) -> None:
-    axis.text(0.5, 0.5, message, ha="center", va="center", transform=axis.transAxes)
-    axis.set_xticks([])
-    axis.set_yticks([])
-
-
-def _pooled_bar_figure(
-    pooled_rows: Sequence[Mapping[str, object]],
-    *,
-    metric: str,
-    title: str,
-    y_label: str,
-) -> Figure:
-    """Grouped bars per severity level, one group member per regime, with t·SEM."""
-    figure, axis = plt.subplots(figsize=(8, 4))
+def _pooled_severity_series(
+    pooled_rows: Sequence[Mapping[str, object]], metric: str
+) -> dict[str, object]:
+    """Per-regime errorbar series over severity levels (color = severity)."""
     rows = [row for row in pooled_rows if str(row["metric"]) == metric]
     levels = [
         level
@@ -323,129 +297,296 @@ def _pooled_bar_figure(
         for regime in pooled.REGIME_ORDER
         if any(str(row["regime"]) == regime for row in rows)
     ]
-    if not levels or not regimes:
-        _empty(
-            axis, "No pooled data (needs >=1 repeat with severity-mapped candidates)"
-        )
-        axis.set_title(title)
-        axis.set_ylabel(y_label)
-        return figure
-    positions = list(range(len(levels)))
-    width = 0.8 / len(regimes)
-    for regime_index, regime in enumerate(regimes):
+    series: list[dict[str, object]] = []
+    for regime in regimes:
         by_level = {
             _as_int(row["severity_level"]): row
             for row in rows
             if str(row["regime"]) == regime
         }
+        level_indices: list[int] = []
         means: list[float] = []
         errors: list[float] = []
-        for level in levels:
+        point_colors: list[str] = []
+        for index, level in enumerate(levels):
             row = by_level.get(level)
-            means.append(_as_float(row["mean"]) if row else float("nan"))
-            if row and row["sem"] is not None and row["t_crit"] is not None:
+            if row is None:
+                continue
+            level_indices.append(index)
+            means.append(_as_float(row["mean"]))
+            if row["sem"] is not None and row["t_crit"] is not None:
                 errors.append(_as_float(row["t_crit"]) * _as_float(row["sem"]))
             else:
                 errors.append(0.0)
-        offsets = [
-            position + (regime_index - (len(regimes) - 1) / 2) * width
-            for position in positions
-        ]
-        axis.bar(
-            offsets,
-            means,
-            width,
-            yerr=errors,
-            capsize=4,
-            label=regime,
-            color=POOLED_REGIME_COLOR.get(regime, PALETTE["neutral"]),
+            point_colors.append(_severity_color(level))
+        series.append(
+            {
+                "regime": regime,
+                "linestyle": REGIME_LINESTYLE.get(regime, "-"),
+                "level_indices": level_indices,
+                "means": means,
+                "errors": errors,
+                "point_colors": point_colors,
+            }
         )
-    axis.axhline(0, color="black", linewidth=0.8)
-    axis.set_xticks(positions, [str(level) for level in levels])
-    axis.set_xlabel(SEVERITY_AXIS_LABEL)
-    axis.set_ylabel(y_label)
-    axis.set_title(title)
-    axis.legend(fontsize="small", title="regime")
-    return figure
+    return {
+        "levels": list(levels),
+        "level_labels": [str(level) for level in levels],
+        "series": series,
+    }
 
 
-def _ranking_figure(rank_records: Sequence[Mapping[str, object]]) -> Figure:
-    """Bump chart: median rank over rounds per severity level, faceted by regime."""
-    figure, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
-    facet = dict(zip(pooled.REGIME_ORDER, axes, strict=True))
-    for regime, axis in facet.items():
-        records = sorted(
-            (row for row in rank_records if str(row["regime"]) == regime),
-            key=lambda row: pooled.SEVERITY_ORDER.index(_as_int(row["severity_level"])),
+def _net_votes_section(
+    pooled_rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    section = _pooled_severity_series(
+        pooled_rows, pooled.PooledMetric.NET_SIGNED_VOTES.value
+    )
+    section.update(
+        {
+            "title": "Net signed votes by severity level",
+            "x_label": SEVERITY_AXIS_LABEL,
+            "y_label": "Mean net signed votes  (+ keep / − remove)",
+        }
+    )
+    return section
+
+
+def _candidate_survival_section(
+    pooled_rows: Sequence[Mapping[str, object]], export_dir: Path
+) -> dict[str, object]:
+    pooled_panel = _pooled_severity_series(
+        pooled_rows, pooled.PooledMetric.SURVIVAL_ROUNDS.value
+    )
+    pooled_panel.update(
+        {
+            "title": "Rounds survived by severity",
+            "x_label": SEVERITY_AXIS_LABEL,
+            "y_label": "Mean rounds survived (95% t·SEM)",
+        }
+    )
+    return {
+        "pooled": pooled_panel,
+        "per_run": _survival_per_run_panel(export_dir),
+    }
+
+
+def _survival_per_run_panel(export_dir: Path) -> dict[str, object]:
+    """Per-run survival scatter: x = readable run label, color = severity."""
+    level_by_candidate = _safe_severity_by_candidate(export_dir)
+    survival_rows = _rows(export_dir, "candidate_survival")
+    run_key: dict[str, tuple[int, str]] = {}
+    for row in survival_rows:
+        run_id = str(row["run_id"])
+        run_key[run_id] = (_repeat_index(row), str(row["regime"]))
+    ordered_runs = sorted(run_key, key=lambda run: (run_key[run][0], run_key[run][1]))
+    run_index = {run_id: index for index, run_id in enumerate(ordered_runs)}
+    labels = [
+        f"r{run_key[run_id][0]} {_REGIME_SHORT.get(run_key[run_id][1], run_key[run_id][1])}"
+        for run_id in ordered_runs
+    ]
+    points: list[dict[str, object]] = []
+    for row in survival_rows:
+        candidate_id = str(row["candidate_id"])
+        level = level_by_candidate.get(candidate_id)
+        if level is None:
+            continue
+        regime = str(row["regime"])
+        points.append(
+            {
+                "x": run_index[str(row["run_id"])],
+                "y": _as_int(row["survival_round"]),
+                "color": _severity_color(level),
+                "marker": REGIME_MARKER.get(regime, "o"),
+            }
         )
-        if not records:
-            _empty(axis, f"No ranking data ({regime})")
-            axis.set_title(f"{regime.capitalize()} regime")
-            continue
-        for row in records:
-            level = _as_int(row["severity_level"])
-            axis.plot(
-                [_as_float(value) for value in _as_sequence(row["rounds"])],
-                [_as_float(value) for value in _as_sequence(row["median_rank"])],
-                marker="o",
-                label=str(level),
-                color=SEVERITY_COLOR.get(level, PALETTE["neutral"]),
-            )
-        axis.set_title(f"{regime.capitalize()} regime")
-        axis.set_xlabel("Round")
-        axis.legend(fontsize="x-small", title="severity", ncol=2)
-    axes[0].set_ylabel("Median rank  (1 = most votes that round)")
-    for axis in axes:
-        if not axis.has_data():
-            continue
-        axis.invert_yaxis()
-    figure.suptitle("Candidate ranking over rounds (median across repeats)")
-    return figure
+    return {
+        "labels": labels,
+        "points": points,
+        "title": "Survival per run",
+        "x_label": "Run  (repeat · regime)",
+        "y_label": "Rounds survived",
+    }
 
 
-def _vote_share_figure(records: Sequence[Mapping[str, object]]) -> Figure:
-    """Mean vote share per round per severity level, faceted by regime, t·SEM bars."""
-    figure, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
-    facet = dict(zip(pooled.REGIME_ORDER, axes, strict=True))
-    for regime, axis in facet.items():
-        regime_records = sorted(
-            (row for row in records if str(row["regime"]) == regime),
-            key=lambda row: pooled.SEVERITY_ORDER.index(_as_int(row["severity_level"])),
+def _round_trajectories_section(export_dir: Path) -> dict[str, object]:
+    rows = sorted(
+        _rows(export_dir, "round_trajectories"),
+        key=lambda row: (str(row["run_id"]), _as_int(row["round_index"])),
+    )
+    return {
+        "pooled": _trajectories_pooled_panel(rows),
+        "per_run": _trajectories_per_run_panel(rows),
+    }
+
+
+def _trajectories_pooled_panel(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Mean total_votes per (regime, round) across repeats, ± SEM band."""
+    grouped: dict[tuple[str, int], list[float]] = defaultdict(list)
+    for row in rows:
+        regime = str(row["regime"])
+        rnd = _as_int(row["round_index"])
+        grouped[(regime, rnd)].append(_as_float(row["total_votes"]))
+    series: list[dict[str, object]] = []
+    for regime in REGIME_ORDER:
+        rounds_seen = sorted(rnd for (rg, rnd) in grouped if rg == regime)
+        if not rounds_seen:
+            continue
+        xs: list[float] = []
+        means: list[float] = []
+        lowers: list[float] = []
+        uppers: list[float] = []
+        for rnd in rounds_seen:
+            mean, sem = _mean_sem(grouped[(regime, rnd)])
+            xs.append(float(rnd))
+            means.append(mean)
+            lowers.append(mean - sem)
+            uppers.append(mean + sem)
+        series.append(
+            {
+                "regime": regime,
+                "linestyle": REGIME_LINESTYLE.get(regime, "-"),
+                "x": xs,
+                "mean": means,
+                "lower": lowers,
+                "upper": uppers,
+            }
         )
-        if not regime_records:
-            _empty(axis, f"No vote-share data ({regime})")
-            axis.set_title(f"{regime.capitalize()} regime")
-            continue
-        for row in regime_records:
-            level = _as_int(row["severity_level"])
-            axis.errorbar(
-                [_as_float(value) for value in _as_sequence(row["rounds"])],
-                [_as_float(value) for value in _as_sequence(row["mean"])],
-                yerr=[_as_float(value) for value in _as_sequence(row["err"])],
-                marker="o",
-                capsize=3,
-                label=str(level),
-                color=SEVERITY_COLOR.get(level, PALETTE["neutral"]),
-            )
-        axis.set_title(f"{regime.capitalize()} regime")
-        axis.set_xlabel("Round")
-        axis.set_ylim(0.0, 1.0)
-        axis.legend(fontsize="x-small", title="severity", ncol=2)
-    axes[0].set_ylabel("Mean vote share  (95% t·SEM over repeats)")
-    figure.suptitle("Mean vote share by severity level per round")
-    return figure
+    return {
+        "series": series,
+        "color": NEUTRAL_COLOR,
+        "title": "Mean total votes by regime",
+        "x_label": "Round",
+        "y_label": "Mean total votes (±SEM)",
+    }
 
 
-def build_plot_figures(
+def _trajectories_per_run_panel(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Per-run total_votes; linestyle = regime, color = repeat gradient."""
+    groups: dict[str, list[Mapping[str, object]]] = defaultdict(list)
+    for row in rows:
+        groups[str(row["run_id"])].append(row)
+    repeats = sorted({_repeat_index(row) for row in rows})
+    repeat_color = _repeat_color_map(repeats)
+    series: list[dict[str, object]] = []
+    for run_id in sorted(groups):
+        run_rows = sorted(groups[run_id], key=lambda row: _as_int(row["round_index"]))
+        regime = str(run_rows[0]["regime"])
+        repeat = _repeat_index(run_rows[0])
+        series.append(
+            {
+                "run_id": run_id,
+                "regime": regime,
+                "seed_repeat_index": repeat,
+                "x": [_as_int(row["round_index"]) for row in run_rows],
+                "total_votes": [_as_int(row["total_votes"]) for row in run_rows],
+                "linestyle": REGIME_LINESTYLE.get(regime, "-"),
+                "color": repeat_color[repeat],
+            }
+        )
+    return {
+        "series": series,
+        "repeat_colors": {str(repeat): repeat_color[repeat] for repeat in repeats},
+        "title": "Total votes per run",
+        "x_label": "Round",
+        "y_label": "Total votes",
+    }
+
+
+def _repeat_color_map(repeats: Sequence[int]) -> dict[int, str]:
+    """Map each distinct repeat to a viridis-gradient hex color (deterministic)."""
+    cmap = plt.get_cmap("viridis")
+    count = len(repeats)
+    colors: dict[int, str] = {}
+    for index, repeat in enumerate(repeats):
+        fraction = 0.0 if count < 2 else index / (count - 1)
+        colors[repeat] = to_hex(cmap(fraction))
+    return colors
+
+
+def build_plot_manifest(export_dir: Path) -> dict[str, object]:
+    """Build the normalized data/order/label/style contract used by rendering."""
+    pooled_rows = _safe_pooled_rows(export_dir)
+    return {
+        "version": PLOT_MANIFEST_VERSION,
+        "style": PLOT_STYLE,
+        "palette": PALETTE,
+        "severity_palette": _severity_palette_manifest(),
+        "regime_linestyle": dict(REGIME_LINESTYLE),
+        "pooled_by_severity": pooled_rows,
+        "plots": {
+            "preference_action_agreement": _agreement_section(export_dir),
+            "run_quality": _run_quality_section(export_dir),
+            "vote_share_by_severity": _vote_share_section(_safe_vote_share(export_dir)),
+            "net_votes_by_severity": _net_votes_section(pooled_rows),
+            "candidate_survival": _candidate_survival_section(pooled_rows, export_dir),
+            "round_trajectories": _round_trajectories_section(export_dir),
+        },
+    }
+
+
+def _empty(axis: plt.Axes, message: str) -> None:
+    axis.text(0.5, 0.5, message, ha="center", va="center", transform=axis.transAxes)
+    axis.set_xticks([])
+    axis.set_yticks([])
+
+
+def _severity_regime_legends(
+    axis: plt.Axes,
     manifest: Mapping[str, object],
-) -> tuple[tuple[str, Figure], ...]:
-    """Create inspectable Matplotlib artists directly from a plot manifest."""
-    plots = manifest["plots"]
-    assert isinstance(plots, Mapping)
-    figures: list[tuple[str, Figure]] = []
+    levels: Sequence[int],
+    regimes: Sequence[str],
+) -> None:
+    """Attach two proxy legends: color → severity level, linestyle → regime."""
+    palette = manifest["severity_palette"]
+    assert isinstance(palette, Mapping)
+    linestyles = manifest["regime_linestyle"]
+    assert isinstance(linestyles, Mapping)
+    color_handles = [
+        Line2D(
+            [0],
+            [0],
+            color=str(palette[str(level)]),
+            marker="o",
+            linestyle="",
+            label=str(level),
+        )
+        for level in levels
+    ]
+    style_handles = [
+        Line2D(
+            [0],
+            [0],
+            color="#333333",
+            linestyle=str(linestyles[regime]),  # type: ignore[arg-type]
+            label=regime,
+        )
+        for regime in regimes
+        if regime in linestyles
+    ]
+    if color_handles:
+        severity_legend = axis.legend(
+            handles=color_handles,
+            title="severity",
+            fontsize="x-small",
+            ncol=2,
+            loc="upper right",
+        )
+        axis.add_artist(severity_legend)
+    if style_handles:
+        axis.legend(
+            handles=style_handles,
+            title="regime",
+            fontsize="x-small",
+            loc="lower right",
+        )
 
-    agreement = plots["preference_action_agreement"]
-    assert isinstance(agreement, Mapping)
+
+def _render_agreement(agreement: Mapping[str, object]) -> Figure:
     figure, axis = plt.subplots(figsize=(8, 4))
     categories = [str(value) for value in _as_sequence(agreement["categories"])]
     values = [_as_float(value) for value in _as_sequence(agreement["values"])]
@@ -458,34 +599,10 @@ def build_plot_figures(
     axis.set_title(str(agreement["title"]))
     axis.set_ylabel(str(agreement["y_label"]))
     axis.set_ylim(*[_as_float(value) for value in _as_sequence(agreement["y_limits"])])
-    figures.append((PLOT_FILES[0], figure))
+    return figure
 
-    survival = plots["candidate_survival"]
-    assert isinstance(survival, Mapping)
-    figure, axis = plt.subplots(figsize=(8, 4))
-    series = list(_as_sequence(survival["series"]))
-    if series:
-        for item in series:
-            assert isinstance(item, Mapping)
-            axis.step(
-                item["x"],
-                item["y"],
-                where="post",
-                alpha=0.65,
-                label=str(item["label"]),
-                color=str(item["color"]),
-                linestyle=str(item["linestyle"]),
-            )
-    else:
-        _empty(axis, "No candidate survival data")
-    axis.set_title(str(survival["title"]))
-    axis.set_xlabel(str(survival["x_label"]))
-    axis.set_ylabel(str(survival["y_label"]))
-    axis.set_ylim(*[_as_float(value) for value in _as_sequence(survival["y_limits"])])
-    figures.append((PLOT_FILES[1], figure))
 
-    quality = plots["run_quality"]
-    assert isinstance(quality, Mapping)
+def _render_run_quality(quality: Mapping[str, object]) -> Figure:
     figure, (left, right) = plt.subplots(
         1, 2, figsize=(13, 5), gridspec_kw={"width_ratios": [3, 1]}
     )
@@ -532,71 +649,245 @@ def build_plot_figures(
     titles = _as_sequence(quality["titles"])
     left.set_title(str(titles[0]))
     right.set_title(str(titles[1]))
-    figures.append((PLOT_FILES[2], figure))
+    return figure
 
-    trajectories = plots["round_trajectories"]
-    assert isinstance(trajectories, Mapping)
-    figure, (left, right) = plt.subplots(1, 2, figsize=(10, 4))
-    trajectory_series = list(_as_sequence(trajectories["series"]))
-    if trajectory_series:
-        for item in trajectory_series:
+
+def _render_vote_share(
+    vote_share: Mapping[str, object], manifest: Mapping[str, object]
+) -> Figure:
+    figure, axis = plt.subplots(figsize=(9, 5))
+    series = [item for item in _as_sequence(vote_share["series"])]
+    if series:
+        levels: list[int] = []
+        regimes: list[str] = []
+        for item in series:
             assert isinstance(item, Mapping)
-            linestyle = "-" if item["regime"] == "support" else "--"
+            x = [_as_float(value) for value in _as_sequence(item["x"])]
+            y = [_as_float(value) for value in _as_sequence(item["y"])]
+            lower = [_as_float(value) for value in _as_sequence(item["ci_lower"])]
+            upper = [_as_float(value) for value in _as_sequence(item["ci_upper"])]
+            color = str(item["color"])
+            axis.plot(x, y, marker="o", color=color, linestyle=str(item["linestyle"]))
+            axis.fill_between(x, lower, upper, color=color, alpha=0.15)
+            level = _as_int(item["severity_level"])
+            if level not in levels:
+                levels.append(level)
+            regime = str(item["regime"])
+            if regime not in regimes:
+                regimes.append(regime)
+        ordered_levels = [lvl for lvl in pooled.SEVERITY_ORDER if lvl in levels]
+        ordered_regimes = [rg for rg in REGIME_ORDER if rg in regimes]
+        _severity_regime_legends(axis, manifest, ordered_levels, ordered_regimes)
+    else:
+        _empty(axis, "No vote-share data")
+    axis.set_title(str(vote_share["title"]))
+    axis.set_xlabel(str(vote_share["x_label"]))
+    axis.set_ylabel(str(vote_share["y_label"]))
+    axis.set_ylim(*[_as_float(value) for value in _as_sequence(vote_share["y_limits"])])
+    return figure
+
+
+def _render_pooled_severity(
+    axis: plt.Axes,
+    panel: Mapping[str, object],
+    manifest: Mapping[str, object],
+    *,
+    empty_message: str,
+) -> None:
+    """Shared renderer for a per-regime errorbar-over-severity panel."""
+    levels = [_as_int(value) for value in _as_sequence(panel["levels"])]
+    level_labels = [str(value) for value in _as_sequence(panel["level_labels"])]
+    series = [item for item in _as_sequence(panel["series"])]
+    if levels and series:
+        positions = list(range(len(levels)))
+        regimes: list[str] = []
+        for item in series:
+            assert isinstance(item, Mapping)
+            indices = [_as_int(value) for value in _as_sequence(item["level_indices"])]
+            means = [_as_float(value) for value in _as_sequence(item["means"])]
+            errors = [_as_float(value) for value in _as_sequence(item["errors"])]
+            colors = [str(value) for value in _as_sequence(item["point_colors"])]
+            axis.errorbar(
+                indices,
+                means,
+                yerr=errors,
+                linestyle=str(item["linestyle"]),
+                color="#555555",
+                marker="",
+                capsize=4,
+                zorder=1,
+            )
+            axis.scatter(indices, means, c=colors, marker="o", zorder=2)
+            regime = str(item["regime"])
+            if regime not in regimes:
+                regimes.append(regime)
+        axis.axhline(0, color="black", linewidth=0.8)
+        axis.set_xticks(positions, level_labels)
+        ordered_regimes = [rg for rg in REGIME_ORDER if rg in regimes]
+        _severity_regime_legends(axis, manifest, levels, ordered_regimes)
+    else:
+        _empty(axis, empty_message)
+    axis.set_xlabel(str(panel["x_label"]))
+    axis.set_ylabel(str(panel["y_label"]))
+    axis.set_title(str(panel["title"]))
+
+
+def _render_net_votes(
+    net_votes: Mapping[str, object], manifest: Mapping[str, object]
+) -> Figure:
+    figure, axis = plt.subplots(figsize=(8, 5))
+    _render_pooled_severity(
+        axis,
+        net_votes,
+        manifest,
+        empty_message="No pooled data (needs >=1 repeat with severity-mapped candidates)",
+    )
+    return figure
+
+
+def _render_candidate_survival(
+    survival: Mapping[str, object], manifest: Mapping[str, object]
+) -> Figure:
+    figure, (left, right) = plt.subplots(1, 2, figsize=(13, 5))
+    pooled_panel = survival["pooled"]
+    assert isinstance(pooled_panel, Mapping)
+    _render_pooled_severity(
+        left,
+        pooled_panel,
+        manifest,
+        empty_message="No pooled data (needs >=1 repeat with severity-mapped candidates)",
+    )
+    per_run = survival["per_run"]
+    assert isinstance(per_run, Mapping)
+    labels = [str(value) for value in _as_sequence(per_run["labels"])]
+    points = [item for item in _as_sequence(per_run["points"])]
+    if labels and points:
+        for item in points:
+            assert isinstance(item, Mapping)
+            right.scatter(
+                [_as_int(item["x"])],
+                [_as_int(item["y"])],
+                color=str(item["color"]),
+                marker=str(item["marker"]),
+                s=36,
+                edgecolors="black",
+                linewidths=0.3,
+            )
+        right.set_xticks(list(range(len(labels))), labels, rotation=90)
+        palette = manifest["severity_palette"]
+        assert isinstance(palette, Mapping)
+        color_handles = [
+            Line2D(
+                [0],
+                [0],
+                color=str(palette[str(level)]),
+                marker="o",
+                linestyle="",
+                label=str(level),
+            )
+            for level in pooled.SEVERITY_ORDER
+        ]
+        right.legend(
+            handles=color_handles, title="severity", fontsize="x-small", ncol=2
+        )
+    else:
+        _empty(right, "No per-run survival data")
+    right.set_title(str(per_run["title"]))
+    right.set_xlabel(str(per_run["x_label"]))
+    right.set_ylabel(str(per_run["y_label"]))
+    return figure
+
+
+def _render_round_trajectories(trajectories: Mapping[str, object]) -> Figure:
+    figure, (left, right) = plt.subplots(1, 2, figsize=(11, 4))
+    pooled_panel = trajectories["pooled"]
+    assert isinstance(pooled_panel, Mapping)
+    pooled_series = [item for item in _as_sequence(pooled_panel["series"])]
+    color = str(pooled_panel["color"])
+    if pooled_series:
+        for item in pooled_series:
+            assert isinstance(item, Mapping)
+            x = [_as_float(value) for value in _as_sequence(item["x"])]
+            mean = [_as_float(value) for value in _as_sequence(item["mean"])]
+            lower = [_as_float(value) for value in _as_sequence(item["lower"])]
+            upper = [_as_float(value) for value in _as_sequence(item["upper"])]
             left.plot(
-                item["x"],
-                item["active_pool_size"],
-                color=item["color"],
-                linestyle=linestyle,
-                label=str(item["run_id"]),
+                x,
+                mean,
+                color=color,
+                linestyle=str(item["linestyle"]),
+                marker="o",
+                label=str(item["regime"]),
             )
-            right.plot(
-                item["x"],
-                item["total_votes"],
-                color=item["color"],
-                linestyle=linestyle,
-                label=f"{item['run_id']} total",
-            )
-            right.plot(
-                item["x"],
-                item["max_votes"],
-                color=item["color"],
-                linestyle=":",
-                label=f"{item['run_id']} max",
-            )
-        left.legend(fontsize="x-small")
-        right.legend(fontsize="x-small")
+            left.fill_between(x, lower, upper, color=color, alpha=0.15)
+        left.legend(fontsize="x-small", title="regime")
     else:
         _empty(left, "No pool trajectories")
-        _empty(right, "No allocation trajectories")
-    titles = _as_sequence(trajectories["titles"])
-    left.set_title(str(titles[0]))
-    right.set_title(str(titles[1]))
-    left.set_xlabel(str(trajectories["x_label"]))
-    right.set_xlabel(str(trajectories["x_label"]))
-    figures.append((PLOT_FILES[3], figure))
+    left.set_title(str(pooled_panel["title"]))
+    left.set_xlabel(str(pooled_panel["x_label"]))
+    left.set_ylabel(str(pooled_panel["y_label"]))
 
-    pooled_rows = manifest.get("pooled_by_severity", [])
-    assert isinstance(pooled_rows, Sequence)
-    for metric, filename, title, y_label in POOLED_METRIC_SPECS:
-        figures.append(
-            (
-                filename,
-                _pooled_bar_figure(
-                    pooled_rows, metric=metric, title=title, y_label=y_label
-                ),
+    per_run = trajectories["per_run"]
+    assert isinstance(per_run, Mapping)
+    run_series = [item for item in _as_sequence(per_run["series"])]
+    if run_series:
+        for item in run_series:
+            assert isinstance(item, Mapping)
+            right.plot(
+                [_as_int(value) for value in _as_sequence(item["x"])],
+                [_as_int(value) for value in _as_sequence(item["total_votes"])],
+                color=str(item["color"]),
+                linestyle=str(item["linestyle"]),
+                alpha=0.8,
             )
-        )
-    rank_records = manifest.get("rank_trajectories", [])
-    assert isinstance(rank_records, Sequence)
-    figures.append((RANKING_FILE, _ranking_figure(rank_records)))
-    vote_share = manifest.get("vote_share_by_severity", [])
-    assert isinstance(vote_share, Sequence)
-    figures.append((VOTE_SHARE_FILE, _vote_share_figure(vote_share)))
-    return tuple(figures)
+        repeat_colors = per_run["repeat_colors"]
+        assert isinstance(repeat_colors, Mapping)
+        repeat_handles = [
+            Line2D([0], [0], color=str(color), label=f"repeat {repeat}")
+            for repeat, color in repeat_colors.items()
+        ]
+        if repeat_handles:
+            right.legend(handles=repeat_handles, fontsize="x-small", title="repeat")
+    else:
+        _empty(right, "No per-run trajectories")
+    right.set_title(str(per_run["title"]))
+    right.set_xlabel(str(per_run["x_label"]))
+    right.set_ylabel(str(per_run["y_label"]))
+    return figure
+
+
+def build_plot_figures(
+    manifest: Mapping[str, object],
+) -> tuple[tuple[str, Figure], ...]:
+    """Create inspectable Matplotlib artists directly from a plot manifest."""
+    plots = manifest["plots"]
+    assert isinstance(plots, Mapping)
+
+    agreement = plots["preference_action_agreement"]
+    assert isinstance(agreement, Mapping)
+    quality = plots["run_quality"]
+    assert isinstance(quality, Mapping)
+    vote_share = plots["vote_share_by_severity"]
+    assert isinstance(vote_share, Mapping)
+    net_votes = plots["net_votes_by_severity"]
+    assert isinstance(net_votes, Mapping)
+    survival = plots["candidate_survival"]
+    assert isinstance(survival, Mapping)
+    trajectories = plots["round_trajectories"]
+    assert isinstance(trajectories, Mapping)
+
+    return (
+        (PLOT_FILES[0], _render_agreement(agreement)),
+        (PLOT_FILES[1], _render_run_quality(quality)),
+        (PLOT_FILES[2], _render_vote_share(vote_share, manifest)),
+        (PLOT_FILES[3], _render_net_votes(net_votes, manifest)),
+        (PLOT_FILES[4], _render_candidate_survival(survival, manifest)),
+        (PLOT_FILES[5], _render_round_trajectories(trajectories)),
+    )
 
 
 def render_plots(export_dir: Path, out_dir: Path) -> tuple[Path, ...]:
-    """Write four PNGs, the self-contained timeline, and the semantic manifest."""
+    """Write the PNGs, the self-contained timeline, and the semantic manifest."""
     manifest = build_plot_manifest(export_dir)
     out_dir.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(

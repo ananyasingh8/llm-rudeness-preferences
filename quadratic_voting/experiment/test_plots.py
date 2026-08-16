@@ -32,6 +32,10 @@ EXPECTED = {
     "candidate_survival.png",
     "run_quality.png",
     "round_trajectories.png",
+    "survival_by_severity.png",
+    "net_votes_by_severity.png",
+    "ranking_over_rounds.png",
+    "pooled_by_severity.parquet",
     "timeline.html",
 }
 

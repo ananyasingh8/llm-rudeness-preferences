@@ -159,6 +159,16 @@ def build_timeline_payload(export_dir: Path, labels: list[Row]) -> dict[str, obj
             aggregate_votes[
                 (str(row["run_id"]), str(row["candidate_id"]), _int(round_index))
             ] = _int(votes)
+    # Aggregate quadratic credits per candidate/round = sum over voters of
+    # (that voter's votes)^2, since one vote costs one credit quadratically.
+    aggregate_credits: dict[tuple[str, str, int], int] = defaultdict(int)
+    for (analysis_run, analysis_round, _voter), voter_rows in analysis.items():
+        for row in voter_rows:
+            raw = row.get("raw_votes")
+            if raw is not None:
+                aggregate_credits[
+                    (analysis_run, str(row["candidate_id"]), analysis_round)
+                ] += _int(raw) ** 2
     runs: list[Row] = []
     for run in sorted(
         _read(export_dir, "runs"), key=lambda value: str(value["run_id"])
@@ -208,6 +218,11 @@ def build_timeline_payload(export_dir: Path, labels: list[Row]) -> dict[str, obj
                             for row in source_turns
                         ],
                         "aggregateVotes": aggregate_votes.get(
+                            (run_id, candidate, index)
+                        )
+                        if is_active
+                        else None,
+                        "aggregateCredits": aggregate_credits.get(
                             (run_id, candidate, index)
                         )
                         if is_active

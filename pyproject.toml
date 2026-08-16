@@ -17,6 +17,7 @@ dependencies = [
     "transformers>=5.5.0",
     "pydantic>=2.13.4",
     "pyarrow>=25.0.1",
+    "scipy>=1.18.0",
 ]
 
 [dependency-groups]

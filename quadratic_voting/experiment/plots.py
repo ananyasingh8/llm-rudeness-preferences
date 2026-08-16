@@ -14,9 +14,11 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402
+import pyarrow as pa  # type: ignore[import-untyped]  # noqa: E402
 import pyarrow.parquet as pq  # type: ignore[import-untyped]  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
 
+from quadratic_voting.experiment import pooled  # noqa: E402
 from quadratic_voting.experiment.timeline_flow import render_export_timeline  # noqa: E402
 
 
@@ -37,6 +39,64 @@ PLOT_FILES = (
     "run_quality.png",
     "round_trajectories.png",
 )
+POOLED_PARQUET_FILE = "pooled_by_severity.parquet"
+POOLED_REGIME_COLOR = {"support": "#4C78A8", "opposition": "#E45756"}
+# One color per severity level for the ranking bump chart.
+SEVERITY_COLOR = {
+    1: "#54A24B",
+    0: "#79706E",
+    -1: "#F58518",
+    -2: "#E45756",
+    -3: "#B279A2",
+}
+# (metric value, output filename, title, y-axis label) for the pooled bar plots.
+POOLED_METRIC_SPECS = (
+    (
+        pooled.PooledMetric.SURVIVAL_ROUNDS.value,
+        "survival_by_severity.png",
+        "Candidate survival by severity level",
+        "Mean rounds survived (mean ± 95% t·SEM over repeats)",
+    ),
+    (
+        pooled.PooledMetric.NET_SIGNED_VOTES.value,
+        "net_votes_by_severity.png",
+        "Net signed votes by severity level",
+        "Mean net signed votes  (+ keep / − remove)",
+    ),
+)
+RANKING_FILE = "ranking_over_rounds.png"
+SEVERITY_AXIS_LABEL = "Severity level  (1 = least rude … −3 = most rude)"
+_POOLED_PARQUET_SCHEMA = pa.schema(
+    [
+        ("analysis_version", pa.string()),
+        ("estimator", pa.string()),
+        ("ci_level", pa.float64()),
+        ("metric", pa.string()),
+        ("severity_level", pa.int64()),
+        ("regime", pa.string()),
+        ("n_repeats", pa.int64()),
+        ("mean", pa.float64()),
+        ("sem", pa.float64()),
+        ("df", pa.int64()),
+        ("t_crit", pa.float64()),
+        ("ci_lower", pa.float64()),
+        ("ci_upper", pa.float64()),
+    ]
+)
+
+
+def _safe_pooled_rows(export_dir: Path) -> list[dict[str, object]]:
+    try:
+        return [dict(row) for row in pooled.pooled_by_severity(export_dir)]
+    except FileNotFoundError:
+        return []
+
+
+def _safe_rank_records(export_dir: Path) -> list[dict[str, object]]:
+    try:
+        return pooled.rank_records_by_severity(export_dir)
+    except FileNotFoundError:
+        return []
 
 
 def _as_int(value: object) -> int:
@@ -102,6 +162,8 @@ def build_plot_manifest(export_dir: Path) -> dict[str, object]:
         "version": PLOT_MANIFEST_VERSION,
         "style": PLOT_STYLE,
         "palette": PALETTE,
+        "pooled_by_severity": _safe_pooled_rows(export_dir),
+        "rank_trajectories": _safe_rank_records(export_dir),
         "plots": {
             "preference_action_agreement": {
                 "categories": [
@@ -189,6 +251,106 @@ def _empty(axis: plt.Axes, message: str) -> None:
     axis.text(0.5, 0.5, message, ha="center", va="center", transform=axis.transAxes)
     axis.set_xticks([])
     axis.set_yticks([])
+
+
+def _pooled_bar_figure(
+    pooled_rows: Sequence[Mapping[str, object]],
+    *,
+    metric: str,
+    title: str,
+    y_label: str,
+) -> Figure:
+    """Grouped bars per severity level, one group member per regime, with t·SEM."""
+    figure, axis = plt.subplots(figsize=(8, 4))
+    rows = [row for row in pooled_rows if str(row["metric"]) == metric]
+    levels = [
+        level
+        for level in pooled.SEVERITY_ORDER
+        if any(_as_int(row["severity_level"]) == level for row in rows)
+    ]
+    regimes = [
+        regime
+        for regime in pooled.REGIME_ORDER
+        if any(str(row["regime"]) == regime for row in rows)
+    ]
+    if not levels or not regimes:
+        _empty(
+            axis, "No pooled data (needs >=1 repeat with severity-mapped candidates)"
+        )
+        axis.set_title(title)
+        axis.set_ylabel(y_label)
+        return figure
+    positions = list(range(len(levels)))
+    width = 0.8 / len(regimes)
+    for regime_index, regime in enumerate(regimes):
+        by_level = {
+            _as_int(row["severity_level"]): row
+            for row in rows
+            if str(row["regime"]) == regime
+        }
+        means: list[float] = []
+        errors: list[float] = []
+        for level in levels:
+            row = by_level.get(level)
+            means.append(_as_float(row["mean"]) if row else float("nan"))
+            if row and row["sem"] is not None and row["t_crit"] is not None:
+                errors.append(_as_float(row["t_crit"]) * _as_float(row["sem"]))
+            else:
+                errors.append(0.0)
+        offsets = [
+            position + (regime_index - (len(regimes) - 1) / 2) * width
+            for position in positions
+        ]
+        axis.bar(
+            offsets,
+            means,
+            width,
+            yerr=errors,
+            capsize=4,
+            label=regime,
+            color=POOLED_REGIME_COLOR.get(regime, PALETTE["neutral"]),
+        )
+    axis.axhline(0, color="black", linewidth=0.8)
+    axis.set_xticks(positions, [str(level) for level in levels])
+    axis.set_xlabel(SEVERITY_AXIS_LABEL)
+    axis.set_ylabel(y_label)
+    axis.set_title(title)
+    axis.legend(fontsize="small", title="regime")
+    return figure
+
+
+def _ranking_figure(rank_records: Sequence[Mapping[str, object]]) -> Figure:
+    """Bump chart: median rank over rounds per severity level, faceted by regime."""
+    figure, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
+    facet = dict(zip(pooled.REGIME_ORDER, axes, strict=True))
+    for regime, axis in facet.items():
+        records = sorted(
+            (row for row in rank_records if str(row["regime"]) == regime),
+            key=lambda row: pooled.SEVERITY_ORDER.index(_as_int(row["severity_level"])),
+        )
+        if not records:
+            _empty(axis, f"No ranking data ({regime})")
+            axis.set_title(f"{regime.capitalize()} regime")
+            continue
+        for row in records:
+            level = _as_int(row["severity_level"])
+            axis.plot(
+                [_as_float(value) for value in _as_sequence(row["rounds"])],
+                [_as_float(value) for value in _as_sequence(row["median_rank"])],
+                marker="o",
+                label=str(level),
+                color=SEVERITY_COLOR.get(level, PALETTE["neutral"]),
+            )
+        axis.set_title(f"{regime.capitalize()} regime")
+        axis.set_xlabel("Round")
+        axis.legend(fontsize="x-small", title="severity", ncol=2)
+    axes[0].set_ylabel("Median rank  (1 = most votes that round)")
+    for axis in axes:
+        if not axis.has_data():
+            continue
+        axis.invert_yaxis()
+    figure.suptitle("Candidate ranking over rounds (median across repeats)")
+    return figure
 
 
 def build_plot_figures(
@@ -328,6 +490,21 @@ def build_plot_figures(
     left.set_xlabel(str(trajectories["x_label"]))
     right.set_xlabel(str(trajectories["x_label"]))
     figures.append((PLOT_FILES[3], figure))
+
+    pooled_rows = manifest.get("pooled_by_severity", [])
+    assert isinstance(pooled_rows, Sequence)
+    for metric, filename, title, y_label in POOLED_METRIC_SPECS:
+        figures.append(
+            (
+                filename,
+                _pooled_bar_figure(
+                    pooled_rows, metric=metric, title=title, y_label=y_label
+                ),
+            )
+        )
+    rank_records = manifest.get("rank_trajectories", [])
+    assert isinstance(rank_records, Sequence)
+    figures.append((RANKING_FILE, _ranking_figure(rank_records)))
     return tuple(figures)
 
 
@@ -346,6 +523,14 @@ def render_plots(export_dir: Path, out_dir: Path) -> tuple[Path, ...]:
             json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
             encoding="utf-8",
         )
+        pooled_rows = manifest["pooled_by_severity"]
+        assert isinstance(pooled_rows, list)
+        pooled_path = staging / POOLED_PARQUET_FILE
+        pq.write_table(
+            pa.Table.from_pylist(pooled_rows, schema=_POOLED_PARQUET_SCHEMA),
+            pooled_path,
+        )
+        produced.append(pooled_path)
         for filename, figure in figures:
             path = staging / filename
             figure.tight_layout()

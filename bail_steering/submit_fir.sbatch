@@ -28,12 +28,22 @@
 # Overridable via the environment (same knobs as fir.slurm):
 #   MODEL_CACHE_DIR  local HF cache holding the pinned checkpoint
 #   PYTHON_MODULE    Lmod module providing Python 3.12
+#   LIMIT            cap generations per task for a cheap smoke/binding probe,
+#                    e.g.  LIMIT=8 sbatch --array=0-1 bail_steering/submit_fir.sbatch
+#                    (unset = full run). The GPU diagnostic below prints before
+#                    generation regardless, so a small LIMIT is enough to test
+#                    per-task GPU isolation without a full 4503-generation run.
 # =============================================================================
 
 set -euo pipefail
 
 MODEL_CACHE_DIR="${MODEL_CACHE_DIR:-/project/def-nvincent/dhpham/cache/models}"
 PYTHON_MODULE="${PYTHON_MODULE:-python/3.12}"
+LIMIT="${LIMIT:-}"
+if [[ -n "$LIMIT" && ! "$LIMIT" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'error: LIMIT must be a positive integer; got %q\n' "$LIMIT" >&2
+    exit 2
+fi
 
 # --- Easy-to-edit run configuration -----------------------------------------
 # BATCH_SIZE: sized for an 80 GB H100 running a small 4-bit model. Can likely
@@ -118,7 +128,7 @@ echo "=== bail_steering array task ==="
 printf 'job_id=%s array=%s/%s host=%s\n' \
     "${SLURM_JOB_ID:-unknown}" "${SLURM_ARRAY_JOB_ID:-unset}" "${TASK_ID}" "$(hostname)"
 echo "condition=${CONDITION} seed=${SEED} batch_size=${BATCH_SIZE}"
-echo "prompt_max_tokens=${PROMPT_MAX_TOKENS} tool_max_tokens=${TOOL_MAX_TOKENS} phase=both"
+echo "prompt_max_tokens=${PROMPT_MAX_TOKENS} tool_max_tokens=${TOOL_MAX_TOKENS} phase=both limit=${LIMIT:-none}"
 echo "cache=${MODEL_CACHE_DIR}"
 echo "================================="
 # GPU-assignment diagnostic: prints exactly which physical GPU(s) Slurm gave
@@ -150,6 +160,9 @@ command=(
     --tool-max-tokens "$TOOL_MAX_TOKENS"
     --phase both
 )
+if [[ -n "$LIMIT" ]]; then
+    command+=(--limit "$LIMIT")
+fi
 
 printf 'starting bail-steering (%s, seed %s) at %s\n' "$CONDITION" "$SEED" "$(date --iso-8601=seconds)"
 "${command[@]}"

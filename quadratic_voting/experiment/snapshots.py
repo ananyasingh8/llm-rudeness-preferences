@@ -1644,6 +1644,29 @@ def build_snapshot_figures(out_dir: Path) -> tuple[tuple[str, Figure], ...]:
         if condition[0] != "action-only"
     )
     preference_labels = _ordered_rudeness(rudeness_agreement)
+    if not preference_conditions or not preference_labels:
+        # No non-action-only arms (e.g. an action-only pilot): stated-preference
+        # agreement is undefined, so render an explicit placeholder rather than a
+        # zero-row subplot grid (which matplotlib rejects).
+        figure, axis = plt.subplots(figsize=(6.5, 3.0), constrained_layout=True)
+        figure.suptitle(
+            "Stated-preference agreement within persisted rudeness "
+            "(descriptive, not causal)",
+            fontsize="large",
+        )
+        axis.text(
+            0.5,
+            0.5,
+            "Not applicable: this dataset has only action-only ballots,\n"
+            "which carry no stated preference to correlate.",
+            ha="center",
+            va="center",
+            transform=axis.transAxes,
+        )
+        axis.set_xticks([])
+        axis.set_yticks([])
+        figures.append(("stated_preference_agreement_by_rudeness.png", figure))
+        return tuple(figures)
     figure, axes = plt.subplots(
         len(preference_conditions),
         len(preference_labels),

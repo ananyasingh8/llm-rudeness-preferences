@@ -1,0 +1,175 @@
+{
+  "cache_dir": "/home/minttea/.cache/huggingface/hub",
+  "card_template_id": "01M03VNZD3TC6262NVV9M3TT2H",
+  "config_hash": "9bfa5c52c853e5ee6a4c393d4798fdeeebc0fce86b5e12ca521d8daf759afdd8",
+  "config_path": "/home/minttea/codebases/llm-rudeness-preferences/epic-9--harden-pilot-execution/quadratic_voting/data/default-pilot-v4-acceptance/run-config.json",
+  "config_sha256": "9e43bde385b40192412744de91776c3c94fb7b26400dd156f77da18a0e52c8cd",
+  "database": "/home/minttea/codebases/llm-rudeness-preferences/epic-9--harden-pilot-execution/quadratic_voting/data/qv-v4-acceptance.sqlite3",
+  "database_identity": "16f051af7aaa845bc257148337fcde6c",
+  "dataset_path": "/home/minttea/codebases/llm-rudeness-preferences/epic-9--harden-pilot-execution/emotion_probing/data/ConvAbuseEMNLPfull.csv",
+  "dataset_sha256": "c054ed30375651cd234930eada705fee6fcad79f86bdca45c1e557284b6b1af4",
+  "dataset_version": "convabuse-emnlp-full/default-v2",
+  "device": "cuda",
+  "export_binding": {
+    "matched_set_id": "01M03VNZXE9DP753519BF7BG3K",
+    "run_ids": [
+      "01M03VNZXGWTP3220Y3QW32YHM",
+      "01M03VNZXFBG0Q0V094QCWHS80",
+      "01M03VNZXJGY8TF4M6T5N6P457",
+      "01M03VNZXHWY5KF2DF40FWP7FE",
+      "01M03VNZXHJ69F3P7JA15P1VAP",
+      "01M03VNZXG0VPMQZG4HDYKV184"
+    ],
+    "source_fingerprint": "e9ac2ba907c42863ee25391686453d255b1174ff6bba607aad09755f412cec46"
+  },
+  "export_files": {
+    "allocations.parquet": "02504da87637664c0384679246d7c561bcc8d52386f974586e6a886e1053ecf0",
+    "ballots.parquet": "c82b16168d0cf1dc4aa2f388330d65432e5ab96b582ff06dbf00bf6639cf229c",
+    "bootstrap_replicates.parquet": "383fd1464f0ba577c7153a9f8c98994abcf20babef6ed7490761ca90edeb1d0f",
+    "calls.parquet": "5a3d30482d65774fb7047edd9f4ff4d7bfa08962489737b049bacacb279db290",
+    "candidate_analysis.parquet": "b9c36531323a0ce9af55db74e89d3fb26e0bc436fd496cd1ab60df20948fb494",
+    "candidate_metadata.parquet": "4fe46dcc0c70fa4807fef9fba347cc6d0b3d861e448403477fe2a7fa6cf46003",
+    "candidate_presentations.parquet": "db01a2f50e42670628c1b721e60ab7e7ce3b7cd22eb36c6fa6f80dbe31940e80",
+    "candidate_survival.parquet": "55859fe338eade4fe12522bda26df35266c358f97e6843a060c821e4c6ca8acc",
+    "experiment_configurations.parquet": "30b2142346c16c8c9d4acac9be9d222098555454f20aa40db3daf2ea95f02bb2",
+    "export-manifest.json": "5b0b0da35c41c97a702d188d7c59426b288680e30cf9a3bec1ba0355448fd198",
+    "model_definitions.parquet": "2562ffddd26bcca764ee9f04db53d96b277007c171b319cb1b292878fd9f2528",
+    "outcomes.parquet": "b7a00ef1c1b55e327ef1cc759c7bf6051c27edcdb5f74452c438d84e88d9197d",
+    "paired_contrasts.parquet": "1a6a6923e13c1fb0afbcc06cb1a43b7cb8217773b57200773aa25eab440058c1",
+    "preference_action_agreement.parquet": "c470be232021a923efa9208baadf849793dde77fa62501ca72866b7caa918bb5",
+    "preference_action_pairs.parquet": "65e2fe1c7291322194a16a3a335078065d83be10648aad5cb1469203839ae0ac",
+    "preference_action_summary.parquet": "c2d87c808fc010a43cc278d4315918aea8c61f2c4bd28c62851f8c947568a351",
+    "rng_draw_populations.parquet": "ed38b15579b3e6ccf4b3dad3ee16bb646741fcdb25d3597964bbe6692df3e5d0",
+    "rng_draws.parquet": "b568f64480d0d864ba167a1a7cca461f5ea2092c1db88cdfbd2d554f3bdc005b",
+    "round_candidates.parquet": "38e1e8d566f01ff1e834f74af2fa82aa7bf92408c309cdeaba17b4bfe3288571",
+    "round_trajectories.parquet": "dfb2fc00e6ea24029ad29c81bc7640a76cc10758300c24ac13cb6510b8fc1e29",
+    "rounds.parquet": "b11471efc85b7532062b547bc06a40a2c05b1faf59ec07b0a5af18f23e9d9285",
+    "run_executions.parquet": "3c1900092b7191b9bade8c325f12e71a73fcfd661cd9967c2e57d5f125b2b2cc",
+    "run_quality.parquet": "56c8e87ec898f0f4eda2d9b1e44167ca6357d9ff0779a531836229c7e7d3b2c1",
+    "runs.parquet": "fbe612e88dce65293e4960f63ecb91c8375c601b57b42146e9d3baff784dd361",
+    "runtime_failures.parquet": "003fa6eff8a851d88325c0246b06a8999c8afbd6c70b00c6a7384dad95dfa69d",
+    "source_annotations.parquet": "e0d5dc8889ba5a47d3622ccb05b18e0d5dafeb87f0f080efe3109b5dde3a3e86",
+    "statement_items.parquet": "77f0fddc22332bba2567a6b3f2fe5e0de5aac94fd8f97c70aba4b7edf9f9632c",
+    "statements.parquet": "380355be7f1fc58e1d23db9be1f29eb45f6b2f6000ad235000ca8294898f8ffa",
+    "turns.parquet": "bf43114f035c28097c9972b4754a0aff54e54f7586a766427d686fa24ff6d5ff",
+    "validation_failures.parquet": "8b7f0ea3e207b17c8776a805bb1e9eeb30d9d30c7b743d590be91bbe01c268e0",
+    "voter_permutations.parquet": "76798064703287c4eddd38be2e213743dc4ca982f1906d0b1460fb515c92b824",
+    "voters.parquet": "438422cb9c22a72fdbca65c98647eda2eb5f5ba69a6f5c69c105fbb0e56e77c7"
+  },
+  "master_seed": 20260815,
+  "matched_set_id": "01M03VNZXE9DP753519BF7BG3K",
+  "model_provenance": {
+    "files": {
+      ".gitattributes": "34448b82c17d60fec9b65b1f093c115ddbaadc04beb1b0140b6bfed2e012a930",
+      "README.md": "aaab87052837925e0fb400bb20700553b11088fa5b3ae21fa0c1ec5da53637a4",
+      "chat_template.jinja": "0a2c8073c878ab1da004bee933a998606537bbb62016310352c7285c3f01c5b5",
+      "config.json": "bbeff1e2fd3fe282536e7ace02309d43e0dbd9b6ac4b6a149b97e3ab6942a878",
+      "generation_config.json": "b69207f9be617e982d13cc273cce6fd88c98dda99a4bdc5e2d52ffe0a0d9f0a9",
+      "model.safetensors": "33fe0cece08fb527ffefbd1a3a9ce73bd71073727993a283506293e5c6bf0137",
+      "processor_config.json": "32bdf45d2ad4cc29a0822ddd157a182de76644f0419a6228d151495256e9813c",
+      "tokenizer.json": "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f",
+      "tokenizer_config.json": "3ab5c7b94dc97d65ca7064496fa69b88ff875378e1cb7ee3e43070c3a8170999"
+    },
+    "repository": "google/gemma-4-E2B-it-qat-q4_0-unquantized",
+    "resolved_path": "/home/minttea/.cache/huggingface/hub/models--google--gemma-4-E2B-it-qat-q4_0-unquantized/snapshots/6befbaca7398925921802abd1f277b495b78b738",
+    "revision": "6befbaca7398925921802abd1f277b495b78b738"
+  },
+  "plot_binding": {
+    "export_binding": {
+      "matched_set_id": "01M03VNZXE9DP753519BF7BG3K",
+      "run_ids": [
+        "01M03VNZXGWTP3220Y3QW32YHM",
+        "01M03VNZXFBG0Q0V094QCWHS80",
+        "01M03VNZXJGY8TF4M6T5N6P457",
+        "01M03VNZXHWY5KF2DF40FWP7FE",
+        "01M03VNZXHJ69F3P7JA15P1VAP",
+        "01M03VNZXG0VPMQZG4HDYKV184"
+      ],
+      "source_fingerprint": "e9ac2ba907c42863ee25391686453d255b1174ff6bba607aad09755f412cec46"
+    },
+    "export_files": {
+      "allocations.parquet": "02504da87637664c0384679246d7c561bcc8d52386f974586e6a886e1053ecf0",
+      "ballots.parquet": "c82b16168d0cf1dc4aa2f388330d65432e5ab96b582ff06dbf00bf6639cf229c",
+      "bootstrap_replicates.parquet": "383fd1464f0ba577c7153a9f8c98994abcf20babef6ed7490761ca90edeb1d0f",
+      "calls.parquet": "5a3d30482d65774fb7047edd9f4ff4d7bfa08962489737b049bacacb279db290",
+      "candidate_analysis.parquet": "b9c36531323a0ce9af55db74e89d3fb26e0bc436fd496cd1ab60df20948fb494",
+      "candidate_metadata.parquet": "4fe46dcc0c70fa4807fef9fba347cc6d0b3d861e448403477fe2a7fa6cf46003",
+      "candidate_presentations.parquet": "db01a2f50e42670628c1b721e60ab7e7ce3b7cd22eb36c6fa6f80dbe31940e80",
+      "candidate_survival.parquet": "55859fe338eade4fe12522bda26df35266c358f97e6843a060c821e4c6ca8acc",
+      "experiment_configurations.parquet": "30b2142346c16c8c9d4acac9be9d222098555454f20aa40db3daf2ea95f02bb2",
+      "export-manifest.json": "5b0b0da35c41c97a702d188d7c59426b288680e30cf9a3bec1ba0355448fd198",
+      "model_definitions.parquet": "2562ffddd26bcca764ee9f04db53d96b277007c171b319cb1b292878fd9f2528",
+      "outcomes.parquet": "b7a00ef1c1b55e327ef1cc759c7bf6051c27edcdb5f74452c438d84e88d9197d",
+      "paired_contrasts.parquet": "1a6a6923e13c1fb0afbcc06cb1a43b7cb8217773b57200773aa25eab440058c1",
+      "preference_action_agreement.parquet": "c470be232021a923efa9208baadf849793dde77fa62501ca72866b7caa918bb5",
+      "preference_action_pairs.parquet": "65e2fe1c7291322194a16a3a335078065d83be10648aad5cb1469203839ae0ac",
+      "preference_action_summary.parquet": "c2d87c808fc010a43cc278d4315918aea8c61f2c4bd28c62851f8c947568a351",
+      "rng_draw_populations.parquet": "ed38b15579b3e6ccf4b3dad3ee16bb646741fcdb25d3597964bbe6692df3e5d0",
+      "rng_draws.parquet": "b568f64480d0d864ba167a1a7cca461f5ea2092c1db88cdfbd2d554f3bdc005b",
+      "round_candidates.parquet": "38e1e8d566f01ff1e834f74af2fa82aa7bf92408c309cdeaba17b4bfe3288571",
+      "round_trajectories.parquet": "dfb2fc00e6ea24029ad29c81bc7640a76cc10758300c24ac13cb6510b8fc1e29",
+      "rounds.parquet": "b11471efc85b7532062b547bc06a40a2c05b1faf59ec07b0a5af18f23e9d9285",
+      "run_executions.parquet": "3c1900092b7191b9bade8c325f12e71a73fcfd661cd9967c2e57d5f125b2b2cc",
+      "run_quality.parquet": "56c8e87ec898f0f4eda2d9b1e44167ca6357d9ff0779a531836229c7e7d3b2c1",
+      "runs.parquet": "fbe612e88dce65293e4960f63ecb91c8375c601b57b42146e9d3baff784dd361",
+      "runtime_failures.parquet": "003fa6eff8a851d88325c0246b06a8999c8afbd6c70b00c6a7384dad95dfa69d",
+      "source_annotations.parquet": "e0d5dc8889ba5a47d3622ccb05b18e0d5dafeb87f0f080efe3109b5dde3a3e86",
+      "statement_items.parquet": "77f0fddc22332bba2567a6b3f2fe5e0de5aac94fd8f97c70aba4b7edf9f9632c",
+      "statements.parquet": "380355be7f1fc58e1d23db9be1f29eb45f6b2f6000ad235000ca8294898f8ffa",
+      "turns.parquet": "bf43114f035c28097c9972b4754a0aff54e54f7586a766427d686fa24ff6d5ff",
+      "validation_failures.parquet": "8b7f0ea3e207b17c8776a805bb1e9eeb30d9d30c7b743d590be91bbe01c268e0",
+      "voter_permutations.parquet": "76798064703287c4eddd38be2e213743dc4ca982f1906d0b1460fb515c92b824",
+      "voters.parquet": "438422cb9c22a72fdbca65c98647eda2eb5f5ba69a6f5c69c105fbb0e56e77c7"
+    }
+  },
+  "plot_files": {
+    "candidate_survival.png": "5192531d3ce369f87718726df0c0637764193c2b4abcae81efd7088e75f3c00b",
+    "plot-manifest.json": "bd24e82772da621968acd845e95747d1c8c64f1b188ac66634d4acd4ff9a51dd",
+    "preference_action_agreement.png": "18cf0c84909a2ba850bb3d6e66476a7fb727293f9925743af87b601347fdf7cb",
+    "round_trajectories.png": "3e7381a8035a20608cc0b5bee85acd06cf49042a9154a5de09c56c2dcb3b080f",
+    "run_quality.png": "e871a41710af98ba2a965edddce15bd8fe880fcf8d9368da9d8943be4b47921d"
+  },
+  "release_id": "01M03VNZ0X7JDETQ67498XPJZ9",
+  "review_artifact": "/home/minttea/codebases/llm-rudeness-preferences/epic-9--harden-pilot-execution/quadratic_voting/DEFAULT_PILOT_REVIEW.md",
+  "review_sha256": "9735fd1511e6ad007c024240aedce8fb5c7fb36e9b64b7f4913ab8a449df857a",
+  "runs": [
+    {
+      "arm": "action-only",
+      "regime": "opposition",
+      "run_id": "01M03VNZXGWTP3220Y3QW32YHM"
+    },
+    {
+      "arm": "action-only",
+      "regime": "support",
+      "run_id": "01M03VNZXFBG0Q0V094QCWHS80"
+    },
+    {
+      "arm": "action-then-statement",
+      "regime": "opposition",
+      "run_id": "01M03VNZXJGY8TF4M6T5N6P457"
+    },
+    {
+      "arm": "action-then-statement",
+      "regime": "support",
+      "run_id": "01M03VNZXHWY5KF2DF40FWP7FE"
+    },
+    {
+      "arm": "statement-then-action",
+      "regime": "opposition",
+      "run_id": "01M03VNZXHJ69F3P7JA15P1VAP"
+    },
+    {
+      "arm": "statement-then-action",
+      "regime": "support",
+      "run_id": "01M03VNZXG0VPMQZG4HDYKV184"
+    }
+  ],
+  "sample_id": "01M03VNZQ4ZZKQ8JX4CMKJD5S7",
+  "sample_path": "/home/minttea/codebases/llm-rudeness-preferences/epic-9--harden-pilot-execution/quadratic_voting/data/default-pilot-v4-acceptance/sample.json",
+  "sample_seed": 20260815,
+  "sample_sha256": "048fc1ae137fbb324b8275ff998d8ea4df484adba9daf26ee0a3f9651134b287",
+  "sample_size": 10,
+  "schema_version": "qv-default-pipeline/v1",
+  "stage": "complete",
+  "voters": 3
+}

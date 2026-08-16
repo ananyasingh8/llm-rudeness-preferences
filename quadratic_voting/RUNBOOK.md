@@ -25,7 +25,7 @@ The command performs the complete dependency chain:
 1. Creates and migrates `quadratic_voting/data/qv.sqlite3`.
 2. Ingests the repository ConvAbuse CSV with
    `majority-severity-negative/v2`.
-3. Registers candidate-card `v1` and instruction-template `v3`.
+3. Registers candidate-card `v1` and instruction-template `v4`.
 4. Creates and freezes a 10-candidate balanced sample with seed `20260815`.
 5. Binds the repository-tracked default review artifact.
 6. Creates the strict run config and all six matched conditions.
@@ -152,7 +152,7 @@ template IDs:
 candidate-card=CARD_TEMPLATE_ID setup=SETUP_ID statement=STATEMENT_ID ...
 ```
 
-Record every printed ID. The current instruction profile is `v3`. Registering a
+Record every printed ID. The current instruction profile is `v4`. Registering a
 new template version does not alter matched sets that are already frozen to an
 older version.
 
@@ -316,37 +316,37 @@ unknown fields.
     "setup": {
       "template_id": "SETUP_ID",
       "name": "setup",
-      "version": "v3",
+      "version": "v4",
       "expected_sha256": "SETUP_SHA256"
     },
     "statement": {
       "template_id": "STATEMENT_ID",
       "name": "statement",
-      "version": "v3",
+      "version": "v4",
       "expected_sha256": "STATEMENT_SHA256"
     },
     "ballot": {
       "template_id": "BALLOT_ID",
       "name": "ballot",
-      "version": "v3",
+      "version": "v4",
       "expected_sha256": "BALLOT_SHA256"
     },
     "correction": {
       "template_id": "CORRECTION_ID",
       "name": "correction",
-      "version": "v3",
+      "version": "v4",
       "expected_sha256": "CORRECTION_SHA256"
     },
     "result": {
       "template_id": "RESULT_ID",
       "name": "result",
-      "version": "v3",
+      "version": "v4",
       "expected_sha256": "RESULT_SHA256"
     },
     "final_result": {
       "template_id": "FINAL_RESULT_ID",
       "name": "final-result",
-      "version": "v3",
+      "version": "v4",
       "expected_sha256": "FINAL_RESULT_SHA256"
     },
     "reviewed": true,
@@ -357,7 +357,7 @@ unknown fields.
     "temperature": 0.7,
     "top_p": 0.9,
     "top_k": 10,
-    "max_new_tokens": 8192
+    "max_new_tokens": 2048
   },
   "ballot_retry": {"max_corrections": 3},
   "statement_retry": {"max_corrections": 3},

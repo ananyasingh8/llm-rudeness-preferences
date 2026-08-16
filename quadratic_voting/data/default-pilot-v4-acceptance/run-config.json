@@ -1,0 +1,110 @@
+{
+  "action_format": "json-with-rationale/v1",
+  "ballot_retry": {
+    "max_corrections": 3
+  },
+  "canonical_json_version": "qv-canonical-json/v1",
+  "credit_budget": 100,
+  "execution_class": "pilot",
+  "master_seed": 20260815,
+  "presentation_policy": "setup-once-ids-later/v1",
+  "prompt_encoding_version": "qv-prompt/v1",
+  "prompts": {
+    "ballot": {
+      "expected_sha256": "7663bf6e9ac0a62386543ea6731dd65c051a0968cff4e4a59f2577e371c040e8",
+      "name": "ballot",
+      "template_id": "01M03VNZMRDRKJ9GH6KV444598",
+      "version": "v4"
+    },
+    "correction": {
+      "expected_sha256": "1cad8370f75dbc47ffcc4b1d9e5a3991248a8ea20e8fe11d63d495cc5a25030f",
+      "name": "correction",
+      "template_id": "01M03VNZMZHKSMQEBWX8X8AJ3D",
+      "version": "v4"
+    },
+    "final_result": {
+      "expected_sha256": "6e8e7776287780405d82bd8667e46f83509cfa573fd3b78d3d5d5c2f3b74ecef",
+      "name": "final-result",
+      "template_id": "01M03VNZNB906PSWSP7KBP4D7M",
+      "version": "v4"
+    },
+    "result": {
+      "expected_sha256": "928f51ec324ba6c0888a870534b8ab621243b035e7e9df21bf4b28e4855c957a",
+      "name": "result",
+      "template_id": "01M03VNZN5XRP4NCTRDA89WVMM",
+      "version": "v4"
+    },
+    "review_sha256": "9735fd1511e6ad007c024240aedce8fb5c7fb36e9b64b7f4913ab8a449df857a",
+    "review_version": "default-pilot-review/v1",
+    "reviewed": true,
+    "setup": {
+      "expected_sha256": "3507f86991709e54fe5f44af8aa634a15c3ee9420fdf644e1c90699751d241c3",
+      "name": "setup",
+      "template_id": "01M03VNZM60FZKBNH05CJBFXY1",
+      "version": "v4"
+    },
+    "statement": {
+      "expected_sha256": "dec87b81f1fd37d00a9029c0c8cd4e8d5afba91632ee8be6931f40f41ad04caa",
+      "name": "statement",
+      "template_id": "01M03VNZMJ72S914RYJT5V9VHH",
+      "version": "v4"
+    }
+  },
+  "route": {
+    "artifact_repository": "google/gemma-4-E2B-it-qat-q4_0-unquantized",
+    "artifact_revision": "6befbaca7398925921802abd1f277b495b78b738",
+    "dtype": "bf16",
+    "model_id": "gemma-4-e2b-it",
+    "provider_id": "local",
+    "quantization_id": "bf16",
+    "runtime_id": "transformers",
+    "tokenizer_repository": "google/gemma-4-E2B-it-qat-q4_0-unquantized",
+    "tokenizer_revision": "6befbaca7398925921802abd1f277b495b78b738"
+  },
+  "runtime_retry": {
+    "initial_backoff_ms": 1000,
+    "max_backoff_ms": 2000,
+    "max_failures_per_execution": 3,
+    "multiplier": 2.0
+  },
+  "sample": {
+    "artifact_path": "/home/minttea/codebases/llm-rudeness-preferences/epic-9--harden-pilot-execution/quadratic_voting/data/default-pilot-v4-acceptance/sample.json",
+    "expected_sha256": "048fc1ae137fbb324b8275ff998d8ea4df484adba9daf26ee0a3f9651134b287",
+    "label_policy": {
+      "expected_sha256": "f5c3fbf825d24b3199b6e0f7e5e0754866ecc84f67af8619964f906b7d54b27d",
+      "label_policy_id": "01M03VNZ0XZVX6E2P8PZEJV82E",
+      "name": "convabuse-rudeness",
+      "review_sha256": "9735fd1511e6ad007c024240aedce8fb5c7fb36e9b64b7f4913ab8a449df857a",
+      "review_version": "default-pilot-review/v1",
+      "reviewed": true,
+      "version": "majority-severity-negative/v2"
+    },
+    "presentation_template": {
+      "expected_sha256": "257b2c7e9e69ad3ef730fcd82794d61624b14ecbd83141561ed93341814e4a0c",
+      "name": "candidate-card",
+      "template_id": "01M03VNZD3TC6262NVV9M3TT2H",
+      "version": "v1"
+    },
+    "release": {
+      "dataset_name": "ConvAbuse",
+      "expected_sha256": "c054ed30375651cd234930eada705fee6fcad79f86bdca45c1e557284b6b1af4",
+      "release_id": "01M03VNZ0X7JDETQ67498XPJZ9",
+      "version": "convabuse-emnlp-full/default-v2"
+    },
+    "sample_id": "01M03VNZQ4ZZKQ8JX4CMKJD5S7"
+  },
+  "sampler_policy": "balanced-matched/v1",
+  "sampling": {
+    "max_new_tokens": 2048,
+    "temperature": 0.7,
+    "top_k": 10,
+    "top_p": 0.9
+  },
+  "schema_version": "qv-run-config/v1",
+  "seed_version": "qv-seed/v1",
+  "statement_retry": {
+    "max_corrections": 3
+  },
+  "tie_policy": "uniform-seeded/v1",
+  "voter_count": 3
+}

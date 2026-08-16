@@ -238,11 +238,10 @@ class TransformersRuntime:
                 str,
                 self._tokenizer.decode(list(completion_ids), skip_special_tokens=True),
             )
-            eos = getattr(self._tokenizer, "eos_token_id", None)
             finish = (
-                FinishReason.EOS
-                if completion_ids and completion_ids[-1] == eos
-                else FinishReason.LENGTH
+                FinishReason.LENGTH
+                if len(completion_ids) == settings.max_new_tokens
+                else FinishReason.EOS
             )
             return GenerationResult(
                 text,

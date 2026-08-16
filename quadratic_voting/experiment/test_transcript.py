@@ -39,6 +39,7 @@ class TranscriptTests(unittest.TestCase):
         *,
         attempt: int = 0,
         errors: tuple[str, ...] = (),
+        round_index: int = 1,
     ) -> VoterRoundView:
         return VoterRoundView(
             setup=SetupContext(
@@ -54,7 +55,11 @@ class TranscriptTests(unittest.TestCase):
             ),
             history=history,
             pending=PendingTurn(
-                1, pending, (CandidateId("C1"), CandidateId("C2")), attempt, errors
+                round_index,
+                pending,
+                (CandidateId("C1"), CandidateId("C2")),
+                attempt,
+                errors,
             ),
         )
 
@@ -77,6 +82,9 @@ class TranscriptTests(unittest.TestCase):
             )
         )
         self.assertIn("ballot turn", action[-1].content)
+        self.assertIn("exactly 100 credits", action[-1].content)
+        self.assertIn("1 credit = 1 vote", action[-1].content)
+        self.assertIn("100 credits = 10 votes", action[-1].content)
         self.assertIn("statement turn", statement_first[-1].content)
         self.assertEqual(
             action_first[-3:],
@@ -101,6 +109,7 @@ class TranscriptTests(unittest.TestCase):
                 ),
                 RoundOutcomeEvent(1, CandidateId("C1"), CandidateId("C2")),
             ),
+            round_index=2,
         )
         messages = render_transcript(view)
         self.assertEqual(messages[1].content, "persisted exact prompt")
@@ -109,6 +118,8 @@ class TranscriptTests(unittest.TestCase):
             "Round 1 result: protected candidate C1; removed candidate C2.",
         )
         self.assertEqual(messages, render_transcript(view))
+        self.assertIn("exactly 100 credits", messages[-1].content)
+        self.assertNotIn("credit price ladder", messages[-1].content)
         self.assertNotIn(
             "secret-run-id-not-rendered", "".join(item.content for item in messages)
         )

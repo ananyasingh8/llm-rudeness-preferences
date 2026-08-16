@@ -172,6 +172,12 @@ class ExperimentTypesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "SamplingProfile.*retry"):
             SamplingProfile(temperature=0.0, top_p=1.0, top_k=1, max_new_tokens=0)
 
+    def test_sampling_profile_uses_reviewed_default_and_preserves_explicit_value(
+        self,
+    ) -> None:
+        self.assertEqual(SamplingProfile(0.0, 1.0, 1).max_new_tokens, 2048)
+        self.assertEqual(SamplingProfile(0.0, 1.0, 1, 32).max_new_tokens, 32)
+
     def test_run_config_defaults_and_validation(self) -> None:
         config = RunConfig(
             arm=ElicitationArm.ACTION_ONLY,

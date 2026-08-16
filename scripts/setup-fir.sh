@@ -76,8 +76,17 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! find_links_output="$(python -m pip config get global.find-links 2>/dev/null)"; then
-    printf 'error: the loaded Python module did not expose DRAC wheelhouse find-links\n' >&2
+# DRAC exposes the wheelhouse under install/download/wheel find-links, not global.
+find_links_output=""
+for key in install.find-links download.find-links wheel.find-links; do
+    if value="$(python -m pip config get "$key" 2>/dev/null)"; then
+        find_links_output="$value"
+        break
+    fi
+done
+if [[ -z "${find_links_output//[[:space:]]/}" ]]; then
+    printf 'error: could not read DRAC wheelhouse find-links from pip config (%s)\n' \
+        "${PIP_CONFIG_FILE:-unset}" >&2
     exit 1
 fi
 find_links_output="${find_links_output//$'\n'/ }"

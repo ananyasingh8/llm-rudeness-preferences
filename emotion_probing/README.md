@@ -190,8 +190,9 @@ From the repository root, submit it with your allocation on the command line:
 sbatch --account=<allocation> emotion_probing/fir.slurm
 ```
 
-The model cache defaults to `$SCRATCH/huggingface`. Override it when the checkpoint was
-downloaded elsewhere. Environment variables passed to `sbatch` select common run modes:
+The model cache defaults to the persistent project path
+`/project/def-nvincent/dhpham/cache/models`. Override `MODEL_CACHE_DIR` when the checkpoint
+was downloaded elsewhere. Environment variables passed to `sbatch` select common run modes:
 
 ```
 # Ten-example end-to-end smoke test
@@ -201,7 +202,7 @@ LIMIT=10 sbatch --account=<allocation> emotion_probing/fir.slurm
 RESUME=1 sbatch --account=<allocation> emotion_probing/fir.slurm
 
 # Run BailBench using an explicit cache location
-EXPERIMENT=bailbench-2b MODEL_CACHE_DIR=/project/<allocation>/models \
+EXPERIMENT=bailbench-2b MODEL_CACHE_DIR=/project/def-nvincent/dhpham/cache/models \
   sbatch --account=<allocation> emotion_probing/fir.slurm
 ```
 

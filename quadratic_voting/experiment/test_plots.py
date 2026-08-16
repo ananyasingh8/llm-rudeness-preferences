@@ -35,6 +35,7 @@ EXPECTED = {
     "survival_by_severity.png",
     "net_votes_by_severity.png",
     "ranking_over_rounds.png",
+    "vote_share_by_severity.png",
     "pooled_by_severity.parquet",
     "timeline.html",
 }
@@ -137,17 +138,16 @@ class FixturePlotTests(AnalysisFixture):
                 [cast(Rectangle, patch).get_height() for patch in quality_left.patches],
                 [
                     value
-                    for values in quality["failure_metrics"].values()
+                    for values in quality["reliability_metrics"].values()
                     for value in values
                 ],
             )
             self.assertEqual(
                 [
-                    cast(Rectangle, patch).get_height()
+                    round(cast(Rectangle, patch).get_width())
                     for patch in quality_right.patches
                 ],
-                quality["token_metrics"]["prompt_tokens"]
-                + quality["token_metrics"]["completion_tokens"],
+                quality["error_codes"]["counts"],
             )
             trajectory = plots["round_trajectories"]
             left, right = figures[3][1].axes

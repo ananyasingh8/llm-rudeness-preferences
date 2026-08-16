@@ -226,6 +226,85 @@ def pooled_by_severity(aggregate_dir: Path) -> tuple[dict[str, object], ...]:
     )
 
 
+def vote_share_by_severity(aggregate_dir: Path) -> list[dict[str, object]]:
+    """Mean vote share per (regime, severity_level) over rounds, across repeats.
+
+    For each (regime, repeat, round) a candidate's vote share is its total raw
+    votes that round divided by all votes cast that round (shares sum to 1 across
+    the active candidates, so severity levels are comparable *within* a round).
+    That per-repeat share is then pooled across repeats with a two-sided 95% t
+    interval (``df = N - 1``). Returns one record per (regime, severity_level):
+    ``{regime, severity_level, rounds, mean, err, ci_lower, ci_upper, n_repeats}``
+    where ``err`` is the t*SEM half-width per round (0 when ``N < 2``).
+    """
+    level_by_candidate = severity_level_by_candidate(
+        _rows(aggregate_dir, "source_annotations")
+    )
+    # numerator per (regime, repeat, round, level); denominator per (regime, repeat, round)
+    numerator: dict[tuple[str, int, int, int], float] = defaultdict(float)
+    denominator: dict[tuple[str, int, int], float] = defaultdict(float)
+    for row in _rows(aggregate_dir, "candidate_analysis"):
+        raw = row["raw_votes"]
+        if raw is None:
+            continue
+        regime = str(row["regime"])
+        repeat = _repeat(row)
+        rnd = _as_int(row["round_index"])
+        votes = _as_float(raw)
+        denominator[(regime, repeat, rnd)] += votes
+        level = level_by_candidate.get(str(row["candidate_id"]))
+        if level is not None:
+            numerator[(regime, repeat, rnd, level)] += votes
+    # per-repeat share, then pool across repeats
+    shares: dict[tuple[str, int, int], list[float]] = defaultdict(list)
+    for (regime, repeat, rnd, level), candidate_votes in numerator.items():
+        total = denominator[(regime, repeat, rnd)]
+        if total <= 0:
+            continue
+        shares[(regime, level, rnd)].append(candidate_votes / total)
+    rounds_seen = sorted({key[2] for key in shares})
+    records: list[dict[str, object]] = []
+    for regime in REGIME_ORDER:
+        for level in SEVERITY_ORDER:
+            rounds: list[float] = []
+            means: list[float] = []
+            errors: list[float] = []
+            lowers: list[float] = []
+            uppers: list[float] = []
+            counts: list[float] = []
+            for rnd in rounds_seen:
+                values = shares.get((regime, level, rnd))
+                if not values:
+                    continue
+                cell = t_sem_cell(values)
+                rounds.append(float(rnd))
+                mean = _as_float(cell["mean"])
+                means.append(mean)
+                if cell["sem"] is not None and cell["t_crit"] is not None:
+                    errors.append(_as_float(cell["t_crit"]) * _as_float(cell["sem"]))
+                    lowers.append(_as_float(cell["ci_lower"]))
+                    uppers.append(_as_float(cell["ci_upper"]))
+                else:
+                    errors.append(0.0)
+                    lowers.append(mean)
+                    uppers.append(mean)
+                counts.append(_as_float(cell["n_repeats"]))
+            if rounds:
+                records.append(
+                    {
+                        "regime": regime,
+                        "severity_level": level,
+                        "rounds": rounds,
+                        "mean": means,
+                        "err": errors,
+                        "ci_lower": lowers,
+                        "ci_upper": uppers,
+                        "n_repeats": counts,
+                    }
+                )
+    return records
+
+
 def _average_ranks(votes_by_level: Mapping[int, float]) -> dict[int, float]:
     """Rank levels by descending votes; ties receive the average of their ranks."""
     order = sorted(votes_by_level.items(), key=lambda item: (-item[1], item[0]))

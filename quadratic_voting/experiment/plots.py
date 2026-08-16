@@ -65,7 +65,53 @@ POOLED_METRIC_SPECS = (
     ),
 )
 RANKING_FILE = "ranking_over_rounds.png"
+VOTE_SHARE_FILE = "vote_share_by_severity.png"
 SEVERITY_AXIS_LABEL = "Severity level  (1 = least rude … −3 = most rude)"
+
+
+def _safe_vote_share(export_dir: Path) -> list[dict[str, object]]:
+    try:
+        return pooled.vote_share_by_severity(export_dir)
+    except FileNotFoundError:
+        return []
+
+
+RELIABILITY_METRICS = (
+    "invalid_attempts",
+    "correction_attempts",
+    "abstentions",
+    "invalid_missing_statements",
+    "runtime_failures",
+    "interruptions",
+)
+RELIABILITY_COLORS = ("#E45756", "#F58518", "#79706E", "#B279A2", "#9D755D", "#BAB0AC")
+REGIME_TICK_COLOR = {"support": "#2E5A88", "opposition": "#A22F2E"}
+_REGIME_SHORT = {"support": "sup", "opposition": "opp"}
+
+
+def _quality_label(row: Mapping[str, object]) -> str:
+    repeat = _as_int(row.get("seed_repeat_index", 0))
+    regime = str(row["regime"])
+    return f"r{repeat} {_REGIME_SHORT.get(regime, regime)}"
+
+
+def _error_code_breakdown(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, list[object]]:
+    """Aggregate invalid_attempts_by_error_code (map<string,int>) across runs."""
+    totals: dict[str, int] = {}
+    for row in rows:
+        entries = row.get("invalid_attempts_by_error_code") or []
+        for entry in _as_sequence(entries):
+            code, count = _as_sequence(entry)  # (code, count) tuple from the map
+            totals[str(code)] = totals.get(str(code), 0) + _as_int(count)
+    ordered = sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+    return {
+        "labels": [code for code, _ in ordered],
+        "counts": [count for _, count in ordered],
+    }
+
+
 _POOLED_PARQUET_SCHEMA = pa.schema(
     [
         ("analysis_version", pa.string()),
@@ -152,7 +198,14 @@ def build_plot_manifest(export_dir: Path) -> dict[str, object]:
         key=lambda row: (str(row["run_id"]), str(row["candidate_id"])),
     )
     quality_rows = sorted(
-        _rows(export_dir, "run_quality"), key=lambda row: str(row["run_id"])
+        _rows(export_dir, "run_quality"),
+        key=lambda row: (
+            _as_int(row.get("seed_repeat_index", 0)),
+            REGIME_ORDER.index(str(row["regime"]))
+            if str(row["regime"]) in REGIME_ORDER
+            else len(REGIME_ORDER),
+            str(row["run_id"]),
+        ),
     )
     trajectory_rows = sorted(
         _rows(export_dir, "round_trajectories"),
@@ -164,6 +217,7 @@ def build_plot_manifest(export_dir: Path) -> dict[str, object]:
         "palette": PALETTE,
         "pooled_by_severity": _safe_pooled_rows(export_dir),
         "rank_trajectories": _safe_rank_records(export_dir),
+        "vote_share_by_severity": _safe_vote_share(export_dir),
         "plots": {
             "preference_action_agreement": {
                 "categories": [
@@ -199,21 +253,17 @@ def build_plot_manifest(export_dir: Path) -> dict[str, object]:
                 "y_limits": [0.0, 1.05],
             },
             "run_quality": {
-                "categories": [str(row["run_id"]) for row in quality_rows],
-                "failure_metrics": {
+                "categories": [_quality_label(row) for row in quality_rows],
+                "regimes": [str(row["regime"]) for row in quality_rows],
+                "reliability_metrics": {
                     metric: [_as_int(row[metric]) for row in quality_rows]
-                    for metric in (
-                        "invalid_attempts",
-                        "correction_attempts",
-                        "abstentions",
-                        "runtime_failures",
-                    )
+                    for metric in RELIABILITY_METRICS
                 },
-                "token_metrics": {
-                    metric: [_as_int(row[metric]) for row in quality_rows]
-                    for metric in ("prompt_tokens", "completion_tokens")
-                },
-                "titles": ["Failures, retries, and abstentions", "Token totals"],
+                "error_codes": _error_code_breakdown(quality_rows),
+                "titles": [
+                    "Reliability per run (repeat · regime)",
+                    "Invalid-attempt error codes (all runs)",
+                ],
             },
             "round_trajectories": {
                 "series": [
@@ -353,6 +403,39 @@ def _ranking_figure(rank_records: Sequence[Mapping[str, object]]) -> Figure:
     return figure
 
 
+def _vote_share_figure(records: Sequence[Mapping[str, object]]) -> Figure:
+    """Mean vote share per round per severity level, faceted by regime, t·SEM bars."""
+    figure, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
+    facet = dict(zip(pooled.REGIME_ORDER, axes, strict=True))
+    for regime, axis in facet.items():
+        regime_records = sorted(
+            (row for row in records if str(row["regime"]) == regime),
+            key=lambda row: pooled.SEVERITY_ORDER.index(_as_int(row["severity_level"])),
+        )
+        if not regime_records:
+            _empty(axis, f"No vote-share data ({regime})")
+            axis.set_title(f"{regime.capitalize()} regime")
+            continue
+        for row in regime_records:
+            level = _as_int(row["severity_level"])
+            axis.errorbar(
+                [_as_float(value) for value in _as_sequence(row["rounds"])],
+                [_as_float(value) for value in _as_sequence(row["mean"])],
+                yerr=[_as_float(value) for value in _as_sequence(row["err"])],
+                marker="o",
+                capsize=3,
+                label=str(level),
+                color=SEVERITY_COLOR.get(level, PALETTE["neutral"]),
+            )
+        axis.set_title(f"{regime.capitalize()} regime")
+        axis.set_xlabel("Round")
+        axis.set_ylim(0.0, 1.0)
+        axis.legend(fontsize="x-small", title="severity", ncol=2)
+    axes[0].set_ylabel("Mean vote share  (95% t·SEM over repeats)")
+    figure.suptitle("Mean vote share by severity level per round")
+    return figure
+
+
 def build_plot_figures(
     manifest: Mapping[str, object],
 ) -> tuple[tuple[str, Figure], ...]:
@@ -403,48 +486,49 @@ def build_plot_figures(
 
     quality = plots["run_quality"]
     assert isinstance(quality, Mapping)
-    figure, (left, right) = plt.subplots(1, 2, figsize=(10, 4))
+    figure, (left, right) = plt.subplots(
+        1, 2, figsize=(13, 5), gridspec_kw={"width_ratios": [3, 1]}
+    )
     quality_categories = [str(value) for value in _as_sequence(quality["categories"])]
     if quality_categories:
-        failures = quality["failure_metrics"]
-        tokens = quality["token_metrics"]
-        assert isinstance(failures, Mapping) and isinstance(tokens, Mapping)
+        reliability = quality["reliability_metrics"]
+        assert isinstance(reliability, Mapping)
+        positions = list(range(len(quality_categories)))
         bottom: list[float] = [0.0] * len(quality_categories)
-        for metric, color in zip(
-            failures, ("#E45756", "#F58518", "#79706E", "#B279A2"), strict=True
-        ):
-            values = [_as_int(value) for value in _as_sequence(failures[metric])]
+        for metric, color in zip(RELIABILITY_METRICS, RELIABILITY_COLORS, strict=True):
+            values = [_as_int(value) for value in _as_sequence(reliability[metric])]
             left.bar(
-                quality_categories,
+                positions,
                 values,
                 bottom=bottom,
                 label=str(metric).replace("_", " "),
                 color=color,
             )
             bottom = [a + b for a, b in zip(bottom, values, strict=True)]
-        positions = list(range(len(quality_categories)))
-        width = 0.35
-        right.bar(
-            [p - width / 2 for p in positions],
-            tokens["prompt_tokens"],
-            width,
-            label="prompt",
-            color="#4C78A8",
+        left.set_xticks(positions, quality_categories, rotation=90)
+        left.set_ylabel("Count")
+        left.set_xlabel("Run  (repeat · regime)")
+        left.legend(
+            fontsize="x-small", ncol=3, loc="upper center", bbox_to_anchor=(0.5, -0.22)
         )
-        right.bar(
-            [p + width / 2 for p in positions],
-            tokens["completion_tokens"],
-            width,
-            label="completion",
-            color="#54A24B",
-        )
-        right.set_xticks(positions, quality_categories, rotation=45)
-        left.tick_params(axis="x", labelrotation=45)
-        left.legend(fontsize="small")
-        right.legend(fontsize="small")
+        regimes = [str(value) for value in _as_sequence(quality["regimes"])]
+        for tick, regime in zip(left.get_xticklabels(), regimes, strict=True):
+            tick.set_color(REGIME_TICK_COLOR.get(regime, "#000000"))
+        error_codes = quality["error_codes"]
+        assert isinstance(error_codes, Mapping)
+        code_labels = [str(value) for value in _as_sequence(error_codes["labels"])]
+        code_counts = [_as_int(value) for value in _as_sequence(error_codes["counts"])]
+        if code_labels:
+            right.barh(code_labels, code_counts, color="#4C78A8")
+            right.invert_yaxis()
+            right.set_xlabel("Invalid attempts (all runs)")
+            for index, count in enumerate(code_counts):
+                right.text(count, index, f" {count}", va="center", fontsize="x-small")
+        else:
+            _empty(right, "No invalid-attempt errors")
     else:
         _empty(left, "No run-quality data")
-        _empty(right, "No token data")
+        _empty(right, "No error-code data")
     titles = _as_sequence(quality["titles"])
     left.set_title(str(titles[0]))
     right.set_title(str(titles[1]))
@@ -505,6 +589,9 @@ def build_plot_figures(
     rank_records = manifest.get("rank_trajectories", [])
     assert isinstance(rank_records, Sequence)
     figures.append((RANKING_FILE, _ranking_figure(rank_records)))
+    vote_share = manifest.get("vote_share_by_severity", [])
+    assert isinstance(vote_share, Sequence)
+    figures.append((VOTE_SHARE_FILE, _vote_share_figure(vote_share)))
     return tuple(figures)
 
 
@@ -534,7 +621,12 @@ def render_plots(export_dir: Path, out_dir: Path) -> tuple[Path, ...]:
         for filename, figure in figures:
             path = staging / filename
             figure.tight_layout()
-            figure.savefig(path, dpi=120, metadata={"Software": "quadratic-voting"})
+            figure.savefig(
+                path,
+                dpi=120,
+                bbox_inches="tight",
+                metadata={"Software": "quadratic-voting"},
+            )
             plt.close(figure)
             produced.append(path)
         produced.append(render_export_timeline(export_dir, staging / "timeline.html"))

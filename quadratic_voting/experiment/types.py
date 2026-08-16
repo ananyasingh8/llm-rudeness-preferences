@@ -120,6 +120,7 @@ class RudenessLabel(StrEnum):
 
 class SamplerPolicy(StrEnum):
     BALANCED_MATCHED = "balanced-matched"
+    LEVEL_STRATIFIED = "level-stratified"
 
 
 class PresentationPolicy(StrEnum):
@@ -145,6 +146,8 @@ class SeedDomain(StrEnum):
     TIE_BREAK = "tie-break"
     SUPPORT_REMOVAL = "support-removal"
     BALANCED_EXTRA_STRATUM = "balanced-extra-stratum"
+    LEVEL_STRATIFIED_DRAW = "level-stratified-draw"
+    REPLICATE = "replicate"
     ANALYSIS_BOOTSTRAP = "analysis-bootstrap"
 
 
@@ -506,6 +509,10 @@ class Clock(Protocol):
     def now(self) -> datetime: ...
 
 
+_DEFAULT_ARMS: tuple[ElicitationArm, ...] = tuple(ElicitationArm)
+_DEFAULT_REGIMES: tuple[VotingRegime, ...] = tuple(VotingRegime)
+
+
 @dataclass(frozen=True, slots=True)
 class MatchedSetConfig:
     voter_count: int
@@ -518,6 +525,12 @@ class MatchedSetConfig:
     action_format: ActionFormat = ActionFormat.JSON_WITH_RATIONALE
     max_consecutive_runtime_failures: int = 3
     execution_class: ExecutionClass = ExecutionClass.FIXTURE
+    sampler_policy: SamplerPolicy = SamplerPolicy.BALANCED_MATCHED
+    # Default to the full arm x regime cross-product so historical six-run
+    # matched sets and their tests remain byte-for-byte unchanged. Reduced
+    # scenarios (e.g. the level-stratified default pilot) pass explicit subsets.
+    arms: tuple[ElicitationArm, ...] = _DEFAULT_ARMS
+    regimes: tuple[VotingRegime, ...] = _DEFAULT_REGIMES
 
     def __post_init__(self) -> None:
         if not isinstance(self.sampling, SamplingProfile) or not isinstance(
@@ -573,6 +586,42 @@ class MatchedSetConfig:
                 "in quadratic_voting.experiment.types.MatchedSetConfig before persistence, "
                 "so deterministic streams cannot be represented exactly. Supply an integer "
                 "from zero through 2**64 - 1 (excluding bool) and retry."
+            )
+        if not isinstance(self.sampler_policy, SamplerPolicy):
+            raise ValueError(
+                "Matched-set configuration construction failed because sampler_policy="
+                f"{self.sampler_policy!r} is not a closed SamplerPolicy value. Validation "
+                "failed in quadratic_voting.experiment.types.MatchedSetConfig before "
+                "matched-set creation, so the persisted sampler_policy_version would be "
+                "unauditable. Parse the dynamic string into SamplerPolicy and retry."
+            )
+        arms = tuple(self.arms)
+        regimes = tuple(self.regimes)
+        if not arms or any(not isinstance(arm, ElicitationArm) for arm in arms):
+            raise ValueError(
+                "Matched-set configuration construction failed because arms="
+                f"{self.arms!r} is empty or contains non-ElicitationArm values. Validation "
+                "failed in quadratic_voting.experiment.types.MatchedSetConfig before "
+                "matched-set creation, so the run matrix would be empty or untyped. Supply "
+                "a non-empty tuple of ElicitationArm values and retry."
+            )
+        if not regimes or any(
+            not isinstance(regime, VotingRegime) for regime in regimes
+        ):
+            raise ValueError(
+                "Matched-set configuration construction failed because regimes="
+                f"{self.regimes!r} is empty or contains non-VotingRegime values. Validation "
+                "failed in quadratic_voting.experiment.types.MatchedSetConfig before "
+                "matched-set creation, so the run matrix would be empty or untyped. Supply "
+                "a non-empty tuple of VotingRegime values and retry."
+            )
+        if len(set(arms)) != len(arms) or len(set(regimes)) != len(regimes):
+            raise ValueError(
+                "Matched-set configuration construction failed because arms or regimes "
+                f"contain duplicates: arms={self.arms!r}, regimes={self.regimes!r}. "
+                "Validation failed in quadratic_voting.experiment.types.MatchedSetConfig "
+                "before matched-set creation, so duplicate (arm, regime) runs would violate "
+                "the matched_set uniqueness invariant. Supply distinct values and retry."
             )
 
 

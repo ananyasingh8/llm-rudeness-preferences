@@ -40,6 +40,8 @@ from quadratic_voting.experiment.sample_file import (
     replace_and_fsync_directory,
     write_fsynced_temp,
 )
+from quadratic_voting.experiment.sampling import LEVEL_STRATIFIED_LEVELS
+from quadratic_voting.experiment.seeds import replicate_master_seed
 from quadratic_voting.experiment.store import (
     acquire_writer_lock,
     open_sqlite_store,
@@ -52,10 +54,19 @@ from quadratic_voting.experiment.transcript import (
 from quadratic_voting.experiment.types import (
     ElicitationArm,
     ReleaseId,
+    SamplerPolicy,
     SamplingProfile,
     TemplateId,
     VoterGenerator,
     VotingRegime,
+)
+
+# The default pilot runs only the action-only arm under both voting regimes,
+# yielding exactly two runs per replicate matched-set.
+_DEFAULT_ARMS: tuple[ElicitationArm, ...] = (ElicitationArm.ACTION_ONLY,)
+_DEFAULT_REGIMES: tuple[VotingRegime, ...] = (
+    VotingRegime.SUPPORT,
+    VotingRegime.OPPOSITION,
 )
 
 _PIPELINE_VERSION: Final[str] = "qv-default-pipeline/v1"
@@ -237,6 +248,7 @@ def _build_config(
     sample_id: str,
     sample_path: Path,
     review_sha256: str,
+    master_seed: int,
 ) -> MatchedSetConfigV1:
     connection = sqlite3.connect(args.db)
     connection.row_factory = sqlite3.Row
@@ -359,14 +371,19 @@ def _build_config(
                 "multiplier": 2.0,
                 "max_backoff_ms": 2000,
             },
-            "master_seed": args.master_seed,
+            "master_seed": master_seed,
             "voter_count": args.voters,
             "credit_budget": 100,
-            "sampler_policy": "balanced-matched/v1",
+            "sampler_policy": "level-stratified/v1",
             "presentation_policy": "setup-once-ids-later/v1",
             "tie_policy": "uniform-seeded/v1",
             "action_format": "json-with-rationale/v1",
             "execution_class": "pilot",
+            # Reduced default-pilot scenario: action-only x {support, opposition}.
+            # model_validate uses the Python path, which requires tuples of the
+            # actual enum members (not JSON string arrays) under strict mode.
+            "arms": _DEFAULT_ARMS,
+            "regimes": _DEFAULT_REGIMES,
         }
     )
 
@@ -392,6 +409,7 @@ def _initial_manifest(
         "sample_size": args.sample_size,
         "sample_seed": args.sample_seed,
         "master_seed": args.master_seed,
+        "repeat": args.repeat,
         "voters": args.voters,
         "cache_dir": str(args.cache_dir.resolve()),
         "device": args.device.value,
@@ -422,6 +440,7 @@ def _load_manifest(args: argparse.Namespace, path: Path) -> dict[str, Any]:
         "sample_size": args.sample_size,
         "sample_seed": args.sample_seed,
         "master_seed": args.master_seed,
+        "repeat": args.repeat,
         "voters": args.voters,
         "cache_dir": str(args.cache_dir.resolve()),
         "device": args.device.value,
@@ -641,13 +660,13 @@ def _ensure_sample(
         else:
             rows = connection.execute(
                 "SELECT sample_id,status,release_id,template_id FROM candidate_sample "
-                "WHERE release_id=? AND template_id=? AND sampler_policy='balanced-matched' "
+                "WHERE release_id=? AND template_id=? AND sampler_policy='level-stratified' "
                 "AND sampler_seed=? AND size=?",
                 (
                     release_id,
                     card_template_id,
                     seed_to_blob(args.sample_seed),
-                    args.sample_size,
+                    len(LEVEL_STRATIFIED_LEVELS),
                 ),
             ).fetchall()
     finally:
@@ -675,8 +694,10 @@ def _ensure_sample(
                 release_id,
                 "--template-id",
                 card_template_id,
+                "--policy",
+                SamplerPolicy.LEVEL_STRATIFIED.value,
                 "--size",
-                str(args.sample_size),
+                str(len(LEVEL_STRATIFIED_LEVELS)),
                 "--seed",
                 str(args.sample_seed),
             ],
@@ -749,7 +770,7 @@ def _ensure_matched_set(
     *,
     config: MatchedSetConfigV1,
     config_path: Path,
-) -> tuple[str, list[dict[str, str]]]:
+) -> tuple[str, str, list[dict[str, str]]]:
     config_value = config.model_dump(mode="json")
     config_hash = _canonical_hash(config_value)
     _write_json(config_path, config_value)
@@ -771,112 +792,16 @@ def _ensure_matched_set(
         print(f"matched_set_id={matched_set_id} status=existing")
     runs = _runs_for_matched_set(args.db, matched_set_id)
     expected_pairs = {
-        (arm.value, regime.value) for arm in ElicitationArm for regime in VotingRegime
+        (arm.value, regime.value) for arm in config.arms for regime in config.regimes
     }
     actual_pairs = {(run["arm"], run["regime"]) for run in runs}
     if len(runs) != len(expected_pairs) or actual_pairs != expected_pairs:
         raise RuntimeError(
             f"Default pipeline matched set {matched_set_id} has invalid run matrix "
-            f"{sorted(actual_pairs)}. Restore its six atomic runs before resuming."
+            f"{sorted(actual_pairs)}; expected {sorted(expected_pairs)}. Restore its atomic "
+            "runs before resuming."
         )
-    _checkpoint(
-        manifest_path,
-        manifest,
-        stage="matched-set",
-        config_path=str(config_path),
-        config_sha256=_file_sha256(config_path),
-        config_hash=config_hash,
-        matched_set_id=matched_set_id,
-        runs=runs,
-    )
-    return matched_set_id, runs
-
-
-def _validate_ready_manifest(
-    args: argparse.Namespace, manifest: dict[str, Any]
-) -> tuple[str, list[dict[str, str]]]:
-    required = {
-        "release_id",
-        "dataset_sha256",
-        "sample_id",
-        "sample_path",
-        "sample_sha256",
-        "config_path",
-        "config_sha256",
-        "config_hash",
-        "matched_set_id",
-        "runs",
-    }
-    missing = sorted(required - manifest.keys())
-    if missing:
-        raise ValueError(f"pipeline manifest is incomplete after setup: {missing}")
-    sample_path = Path(str(manifest["sample_path"]))
-    config_path = Path(str(manifest["config_path"]))
-    file_checks = {
-        "sample_sha256": (
-            sample_path,
-            str(manifest["sample_sha256"]),
-        ),
-        "config_sha256": (
-            config_path,
-            str(manifest["config_sha256"]),
-        ),
-    }
-    for name, (path, expected_hash) in file_checks.items():
-        if not path.is_file() or _file_sha256(path) != expected_hash:
-            raise ValueError(
-                f"Default pipeline resume refused changed or missing {name} artifact {path}. "
-                "Restore the manifest-bound bytes or start a new pipeline."
-            )
-    config = MatchedSetConfigV1.from_json_file(config_path)
-    if _canonical_hash(config.model_dump(mode="json")) != manifest["config_hash"]:
-        raise ValueError("pipeline config canonical hash differs from its manifest")
-    connection = sqlite3.connect(args.db)
-    connection.row_factory = sqlite3.Row
-    try:
-        row = connection.execute(
-            "SELECT m.matched_set_id,c.config_hash,ed.sample_id,ed.release_id,r.file_sha256,"
-            "lp.review_version,lp.review_sha256,s.artifact_sha256 "
-            "FROM matched_set m JOIN experiment_config_record c ON c.config_id=m.config_id "
-            "JOIN experiment_definition ed ON ed.definition_id=c.definition_id "
-            "JOIN candidate_sample s ON s.sample_id=ed.sample_id "
-            "JOIN dataset_release r ON r.release_id=ed.release_id "
-            "JOIN label_policy lp ON lp.label_policy_id=ed.label_policy_id "
-            "WHERE m.matched_set_id=?",
-            (manifest["matched_set_id"],),
-        ).fetchone()
-    finally:
-        connection.close()
-    expected = (
-        manifest["matched_set_id"],
-        manifest["config_hash"],
-        manifest["sample_id"],
-        manifest["release_id"],
-        manifest["dataset_sha256"],
-        _REVIEW_VERSION,
-        manifest["review_sha256"],
-        manifest["sample_sha256"],
-    )
-    actual = tuple(row) if row is not None else None
-    if actual != expected:
-        raise ValueError(
-            "Default pipeline resume refused database/manifest identity mismatch: "
-            f"persisted={actual!r}, expected={expected!r}. Restore the original database "
-            "or start with a new output directory."
-        )
-    current_dataset_sha256 = _file_sha256(args.dataset_path.resolve())
-    if current_dataset_sha256 != manifest["dataset_sha256"]:
-        raise ValueError(
-            "Default pipeline resume refused dataset bytes that differ from the "
-            "manifest-bound release. Restore the original dataset."
-        )
-    matched_set_id = str(manifest["matched_set_id"])
-    runs = _runs_for_matched_set(args.db, matched_set_id)
-    if runs != manifest["runs"]:
-        raise ValueError(
-            f"Default pipeline resume refused changed run IDs for {matched_set_id}."
-        )
-    return matched_set_id, runs
+    return matched_set_id, config_hash, runs
 
 
 def _directory_hashes(path: Path) -> dict[str, str]:
@@ -1105,89 +1030,158 @@ def _run(args: argparse.Namespace) -> int:
         _write_json(manifest_path, manifest)
         print(f"pipeline_manifest={manifest_path} status=initialized")
 
-    if "matched_set_id" in manifest:
-        matched_set_id, runs = _validate_ready_manifest(args, manifest)
-    else:
-        release_id = _ensure_release(args, manifest, manifest_path)
-        card_template_id = _ensure_templates(args, release_id)
-        _checkpoint(
-            manifest_path,
-            manifest,
-            stage="templates",
-            card_template_id=card_template_id,
-        )
-        sample_id, sample_path = _ensure_sample(
-            args,
-            manifest,
-            manifest_path,
-            release_id=release_id,
-            card_template_id=card_template_id,
-        )
-        _approve_label_policy(args.db, review_sha256, command="pipeline-default-review")
-        _checkpoint(manifest_path, manifest, stage="reviewed")
-        config_path = args.output_dir.resolve() / "run-config.json"
+    # Setup is idempotent and shared by every replicate: one release, one card
+    # template, and ONE level-stratified five-candidate sample reused across all
+    # seed-repeats. Each ensure-step short-circuits on resume via the manifest and
+    # the immutable database rows.
+    release_id = _ensure_release(args, manifest, manifest_path)
+    card_template_id = _ensure_templates(args, release_id)
+    _checkpoint(
+        manifest_path,
+        manifest,
+        stage="templates",
+        card_template_id=card_template_id,
+    )
+    sample_id, sample_path = _ensure_sample(
+        args,
+        manifest,
+        manifest_path,
+        release_id=release_id,
+        card_template_id=card_template_id,
+    )
+    _approve_label_policy(args.db, review_sha256, command="pipeline-default-review")
+    _checkpoint(manifest_path, manifest, stage="reviewed")
+
+    if args.generator_factory is None:
+        args.generator_factory = _shared_default_generator_factory(args)
+        _bind_model_provenance(args, manifest, manifest_path)
+
+    # Seed-repeat: reuse the one sampled candidate set across `repeat` replicate
+    # matched-sets, each with a distinct hash-derived master seed so non-zero
+    # temperature generations differ while candidate identity stays fixed.
+    #
+    # Resume note: the loop is deterministic and idempotent on a clean rerun.
+    # Each replicate's config is rebuilt from the base seed and index; existing
+    # matched sets are reused by config_hash, completed runs are re-verified
+    # cheaply, and per-replicate exports are skipped when their source fingerprint
+    # and files are unchanged. The manifest records each replicate's identifiers
+    # for provenance; it does not gate resume the way the retired single
+    # matched-set fast-path did.
+    export_root = args.output_dir.resolve() / "export"
+    base_seed = args.master_seed
+    replicate_records: list[dict[str, Any]] = []
+    for index in range(args.repeat):
+        replicate_seed = replicate_master_seed(base_seed, index)
+        config_path = args.output_dir.resolve() / f"run-config.repeat-{index}.json"
         config = _build_config(
             args,
             sample_id=sample_id,
             sample_path=sample_path,
             review_sha256=review_sha256,
+            master_seed=replicate_seed,
         )
-        matched_set_id, runs = _ensure_matched_set(
+        matched_set_id, config_hash, runs = _ensure_matched_set(
             args,
             manifest,
             manifest_path,
             config=config,
             config_path=config_path,
         )
-        _validate_ready_manifest(args, manifest)
+        for run in runs:
+            _invoke(
+                args,
+                [
+                    "run",
+                    "--run-id",
+                    run["run_id"],
+                    "--cache-dir",
+                    str(args.cache_dir),
+                    "--device",
+                    args.device.value,
+                ],
+            )
+            _invoke(args, ["verify", "--run-id", run["run_id"]])
 
-    if args.generator_factory is None:
-        args.generator_factory = _shared_default_generator_factory(args)
-        _bind_model_provenance(args, manifest, manifest_path)
-    for run in runs:
-        _invoke(
+        source_binding = {
+            "matched_set_id": matched_set_id,
+            "run_ids": [run["run_id"] for run in runs],
+            "source_fingerprint": _matched_set_source_fingerprint(
+                args.db, matched_set_id
+            ),
+        }
+        export_dir = export_root / f"repeat-{index}"
+        _ensure_derived_artifact(
             args,
-            [
-                "run",
-                "--run-id",
-                run["run_id"],
-                "--cache-dir",
-                str(args.cache_dir),
-                "--device",
-                args.device.value,
+            manifest,
+            manifest_path,
+            output=export_dir,
+            manifest_key=f"export_files_repeat_{index}",
+            binding_key=f"export_binding_repeat_{index}",
+            source_binding=source_binding,
+            command=[
+                "export",
+                "--matched-set",
+                matched_set_id,
+                "--out",
+                str(export_dir),
             ],
         )
-        _invoke(args, ["verify", "--run-id", run["run_id"]])
+        replicate_records.append(
+            {
+                "index": index,
+                "master_seed": replicate_seed,
+                "config_hash": config_hash,
+                "config_path": str(config_path),
+                "matched_set_id": matched_set_id,
+                "run_ids": [run["run_id"] for run in runs],
+                "source_fingerprint": source_binding["source_fingerprint"],
+            }
+        )
+        _checkpoint(
+            manifest_path,
+            manifest,
+            stage=f"replicate-{index}",
+            replicates=replicate_records,
+        )
 
-    source_binding = {
-        "matched_set_id": matched_set_id,
-        "run_ids": [run["run_id"] for run in runs],
-        "source_fingerprint": _matched_set_source_fingerprint(args.db, matched_set_id),
+    # Aggregate every replicate export into one directory, tagging rows with
+    # seed_repeat_index, then plot from that aggregate.
+    aggregate_dir = export_root / "aggregate"
+    aggregate_binding = {
+        "replicates": [
+            {
+                "index": record["index"],
+                "matched_set_id": record["matched_set_id"],
+                "source_fingerprint": record["source_fingerprint"],
+            }
+            for record in replicate_records
+        ]
     }
-    export_dir = args.output_dir.resolve() / "export"
-    export_changed = _ensure_derived_artifact(
+    aggregate_changed = _ensure_derived_artifact(
         args,
         manifest,
         manifest_path,
-        output=export_dir,
-        manifest_key="export_files",
-        binding_key="export_binding",
-        source_binding=source_binding,
+        output=aggregate_dir,
+        manifest_key="aggregate_files",
+        binding_key="aggregate_binding",
+        source_binding=aggregate_binding,
         command=[
-            "export",
-            "--matched-set",
-            matched_set_id,
+            "aggregate",
+            "--input",
+            str(export_root),
+            "--repeats",
+            str(args.repeat),
             "--out",
-            str(export_dir),
+            str(aggregate_dir),
         ],
     )
-    if export_changed:
+    if aggregate_changed:
         manifest.pop("plot_files", None)
         _write_json(manifest_path, manifest)
     plot_dir = args.output_dir.resolve() / "plots"
     plot_binding = {
-        "export_binding": source_binding,
-        "export_files": _directory_hashes(export_dir),
+        "aggregate_binding": aggregate_binding,
+        "aggregate_files": _directory_hashes(aggregate_dir),
     }
     _ensure_derived_artifact(
         args,
@@ -1197,12 +1191,13 @@ def _run(args: argparse.Namespace) -> int:
         manifest_key="plot_files",
         binding_key="plot_binding",
         source_binding=plot_binding,
-        command=["plot", "--export-dir", str(export_dir), "--out", str(plot_dir)],
+        command=["plot", "--export-dir", str(aggregate_dir), "--out", str(plot_dir)],
     )
     _checkpoint(manifest_path, manifest, stage="complete")
     print(
-        f"pipeline=complete matched_set_id={matched_set_id} "
-        f"manifest={manifest_path} export={export_dir} plots={plot_dir}"
+        f"pipeline=complete replicates={args.repeat} "
+        f"manifest={manifest_path} export={export_root} aggregate={aggregate_dir} "
+        f"plots={plot_dir}"
     )
     return 0
 
@@ -1211,11 +1206,12 @@ def register(
     subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> None:
     pipeline = subparsers.add_parser(
-        "pipeline", help="run the reviewed default six-condition pilot"
+        "pipeline", help="run the reviewed default seed-repeat pilot"
     )
     pipeline_sub = pipeline.add_subparsers(required=True)
     run = pipeline_sub.add_parser(
-        "run", help="create, execute, verify, export, and plot the default pilot"
+        "run",
+        help="create, execute, verify, export, aggregate, and plot the default pilot",
     )
     run.add_argument(
         "--dataset-path",
@@ -1233,9 +1229,20 @@ def register(
         type=Path,
         default=Path("quadratic_voting/DEFAULT_PILOT_REVIEW_V2.md"),
     )
-    run.add_argument("--sample-size", type=_positive, default=10)
+    # The level-stratified default draws exactly one candidate per ConvAbuse
+    # severity level (five candidates); --sample-size is retained for manifest
+    # provenance and drift detection but is not used to size the level sample.
+    run.add_argument(
+        "--sample-size", type=_positive, default=len(LEVEL_STRATIFIED_LEVELS)
+    )
     run.add_argument("--sample-seed", type=_seed, default=_DEFAULT_SEED)
     run.add_argument("--master-seed", type=_seed, default=_DEFAULT_SEED)
+    run.add_argument(
+        "--repeat",
+        type=_positive,
+        default=10,
+        help="number of seed-repeat replicate matched-sets reusing the sampled set",
+    )
     run.add_argument("--voters", type=_positive, default=3)
     run.add_argument("--cache-dir", type=Path, default=Path(HF_HUB_CACHE))
     run.add_argument("--device", type=Device, choices=list(Device), default=Device.CUDA)

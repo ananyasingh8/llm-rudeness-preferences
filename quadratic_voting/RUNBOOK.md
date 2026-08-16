@@ -1,8 +1,15 @@
 # Quadratic Voting Pipeline Runbook
 
 This runbook describes the current end-to-end operator workflow for ingesting
-ConvAbuse, freezing a candidate sample, creating the six matched experiment
-runs, executing Gemma locally, and verifying and exporting the results.
+ConvAbuse, freezing a candidate sample, creating the matched experiment runs,
+executing Gemma locally, and verifying and exporting the results.
+
+The one-command default pilot runs a deliberately simplified scenario for fast
+analysis: the `action-only` arm under both voting regimes (`support` and
+`opposition`), a five-candidate set drawn one-per-severity-level, three voters,
+repeated across ten seed-repeats. The lower-level `sample create` and
+`matched-set create` commands still support the balanced sampler and the full
+three-arm × two-regime "primary" matrix for custom runs.
 
 ## Quick Start
 
@@ -26,19 +33,30 @@ The command performs the complete dependency chain:
 2. Ingests the repository ConvAbuse CSV with
    `majority-severity-negative-complete-context/v3`.
 3. Registers candidate-card `v3` and instruction-template `v5`.
-4. Creates and freezes a 10-candidate balanced sample with seed `20260815`.
+4. Creates and freezes a five-candidate `level-stratified/v1` sample with sample
+   seed `20260815`: exactly one candidate per ConvAbuse severity level, where a
+   candidate's level is the modal per-annotator severity (ties break toward the
+   more severe level).
 5. Binds the repository-tracked default review artifact.
-6. Creates the strict run config and all six matched conditions.
+6. Creates the strict run config with the `action-only` arm under both regimes
+   (two runs per matched set).
 7. Retrieves the exact pinned Gemma artifact if needed.
-8. Runs all six conditions with three voters and master seed `20260815`.
+8. Runs ten seed-repeat replicate matched-sets that reuse the same five
+   candidates, each with a distinct master seed hash-derived from base seed
+   `20260815`. With non-zero temperature (0.7) each replicate's generations
+   differ. Every replicate uses three voters.
 9. Verifies every persisted round outcome.
-10. Exports Parquet tables and renders plots, including a self-contained
-    `timeline.html` in the `plots/` directory.
+10. Exports each replicate under `export/repeat-<i>/`, then concatenates them
+    into `export/aggregate/` with a `seed_repeat_index` column and renders plots
+    from the aggregate, including a self-contained `timeline.html` in the
+    `plots/` directory.
 
 Artifacts are written under `quadratic_voting/data/default-pilot/`. The command
 writes `manifest.json` before model execution. If execution is interrupted,
-rerun the exact same command: completed turns and runs are reused, while the
-first incomplete model call resumes with its original prompt and seed.
+rerun the exact same command: completed turns, runs, and per-replicate exports
+are reused, while the first incomplete model call resumes with its original
+prompt and seed. The candidate sample is created once and shared across all ten
+replicates.
 The manifest also binds a durable random identity stored in the SQLite database;
 do not replace the database at the same path during recovery. Dataset bytes,
 the pinned model snapshot, and the source-bound export and plot artifacts are

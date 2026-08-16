@@ -10,6 +10,7 @@ from quadratic_voting.experiment.seeds import (
     SeededDraw,
     call_seed,
     derive_seed,
+    replicate_master_seed,
     support_removal_draw,
     tie_break_draw,
     voter_permutation_draw,
@@ -143,6 +144,32 @@ class SeedTests(unittest.TestCase):
             draw.choose(())
         with self.assertRaisesRegex(ValueError, "SeededDraw.permutation.*retry"):
             draw.permutation(())
+
+    def test_replicate_master_seed_is_deterministic_distinct_and_uint64(self) -> None:
+        base = 20260815
+        seeds = [replicate_master_seed(base, index) for index in range(10)]
+        # Deterministic: same base and index reproduce the same seed.
+        self.assertEqual(
+            seeds, [replicate_master_seed(base, index) for index in range(10)]
+        )
+        # Distinct across replicate indices.
+        self.assertEqual(len(set(seeds)), len(seeds))
+        # In-range uint64 values.
+        for seed in seeds:
+            self.assertGreaterEqual(seed, 0)
+            self.assertLess(seed, 1 << 64)
+        # Distinct across base seeds and matches the raw derivation contract.
+        self.assertNotEqual(
+            replicate_master_seed(base, 0), replicate_master_seed(base + 1, 0)
+        )
+        self.assertEqual(
+            replicate_master_seed(base, 3),
+            derive_seed(base, SeedDomain.REPLICATE, 3),
+        )
+
+    def test_replicate_master_seed_rejects_negative_index(self) -> None:
+        with self.assertRaisesRegex(ValueError, "nonnegative integer"):
+            replicate_master_seed(1, -1)
 
 
 if __name__ == "__main__":

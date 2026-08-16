@@ -76,8 +76,10 @@ The durable experiment interface is the module CLI. Mutating commands take the
 common database writer lock before SQLite open or migration; inspection and
 verification open an existing compatible database read-only.
 
-See [`RUNBOOK.md`](RUNBOOK.md) for the one-command default six-run pilot and the
-complete custom operator workflow.
+See [`RUNBOOK.md`](RUNBOOK.md) for the one-command default pilot (action-only arm
+under both regimes, five candidates drawn one-per-severity-level, three voters,
+ten seed-repeats) and the complete custom operator workflow, which still supports
+the balanced sampler and the full three-arm × two-regime matrix.
 
 ```console
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 migrate

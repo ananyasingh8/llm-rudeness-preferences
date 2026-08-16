@@ -246,6 +246,26 @@ def support_removal_draw(
     )
 
 
+def replicate_master_seed(base_seed: int, replicate_index: int) -> int:
+    """Derive a distinct uint64 master seed for one seed-repeat replicate.
+
+    The default pilot samples one 5-candidate set, then runs ``repeat`` replicate
+    matched-sets that reuse those candidates. Each replicate needs its own master
+    seed so non-zero-temperature generations differ while candidate identity stays
+    fixed. The derivation reuses the auditable ``qv-seed/v1`` wire format under the
+    ``replicate`` domain, keyed by the base seed and the zero-based replicate index.
+    """
+    if type(replicate_index) is not int or replicate_index < 0:
+        raise ValueError(
+            "Replicate master-seed derivation failed because replicate_index="
+            f"{replicate_index!r} is not a nonnegative integer. Validation failed in "
+            "quadratic_voting.experiment.seeds.replicate_master_seed before any draw, so "
+            "the seed-repeat schedule cannot be reproduced. Supply a nonnegative integer "
+            "replicate index and retry."
+        )
+    return derive_seed(base_seed, SeedDomain.REPLICATE, replicate_index)
+
+
 def balanced_extra_stratum_draw(sample_seed: int, sample_size: int) -> SeededDraw:
     """Return the persisted versioned draw used only for odd balanced samples."""
     return SeededDraw(

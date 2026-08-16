@@ -1378,7 +1378,7 @@ class SqliteExperimentStore:
                     config.presentation_policy.value,
                     config.action_format.value,
                     "qv-run-config/v1",
-                    "balanced-matched/v1",
+                    f"{config.sampler_policy.value}/v1",
                     config.execution_class.value,
                 ),
             )
@@ -1392,8 +1392,8 @@ class SqliteExperimentStore:
                 ).permutation(tuple(CandidateId(value) for value in sample.root))
                 for voter_index in range(config.voter_count)
             }
-            for arm in ElicitationArm:
-                for regime in VotingRegime:
+            for arm in config.arms:
+                for regime in config.regimes:
                     run_id = RunId(_ulid())
                     run_ids[(arm, regime)] = run_id
                     self.connection.execute(
@@ -1720,6 +1720,9 @@ class SqliteExperimentStore:
             credit_budget=config.credit_budget,
             max_consecutive_runtime_failures=config.runtime_retry.max_failures_per_execution,
             execution_class=ExecutionClass(config.execution_class),
+            sampler_policy=SamplerPolicy(config.sampler_policy.rsplit("/", 1)[0]),
+            arms=tuple(config.arms),
+            regimes=tuple(config.regimes),
         )
         instruction_json = _canonical_json(
             {

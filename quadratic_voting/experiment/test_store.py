@@ -499,8 +499,14 @@ class StoreTest(unittest.TestCase):
         definition: RunDefinition,
         *,
         execution_class: str = "fixture",
+        arms: tuple[ElicitationArm, ...] | None = None,
+        regimes: tuple[VotingRegime, ...] | None = None,
     ) -> MatchedSetConfigV1:
         data = valid_config()
+        if arms is not None:
+            data["arms"] = arms
+        if regimes is not None:
+            data["regimes"] = regimes
         sample = self.store.connection.execute(
             "SELECT s.*,r.dataset_name,r.version AS release_version,r.file_sha256,"
             "lp.name AS policy_name,lp.version AS policy_version,lp.rule_sha256,"
@@ -575,6 +581,51 @@ class StoreTest(unittest.TestCase):
         }
         data["execution_class"] = execution_class
         return MatchedSetConfigV1.model_validate(data)
+
+    def test_arm_regime_subset_creates_only_configured_runs(self) -> None:
+        release, presentation, candidates = self._catalog(reviewed=True)
+        sample_id = self.store.create_sample(
+            release, presentation, SamplerPolicy.BALANCED_MATCHED, 4, candidates
+        )
+        artifact = self.root / "subset.json"
+        self.store.freeze_sample(sample_id, artifact)
+        definition = self._definition(
+            presentation, hashlib.sha256(artifact.read_bytes()).hexdigest()
+        )
+        config = self._strict_config(
+            str(sample_id),
+            artifact,
+            definition,
+            arms=(ElicitationArm.ACTION_ONLY,),
+            regimes=(VotingRegime.SUPPORT, VotingRegime.OPPOSITION),
+        )
+        path = self.store.path
+        self.store.close()
+        with acquire_writer_lock(path) as lock:
+            self.store = open_sqlite_store(
+                path, writer_lock=lock, require_writer_lock=True
+            )
+            creation = self.store.create_matched_set_v1(config)
+            self.assertEqual(
+                set(creation.run_ids),
+                {
+                    (ElicitationArm.ACTION_ONLY, VotingRegime.SUPPORT),
+                    (ElicitationArm.ACTION_ONLY, VotingRegime.OPPOSITION),
+                },
+            )
+            pairs = self.store.connection.execute(
+                "SELECT arm,regime FROM experiment_run ORDER BY arm,regime"
+            ).fetchall()
+            self.assertEqual(
+                [tuple(row) for row in pairs],
+                [("action-only", "opposition"), ("action-only", "support")],
+            )
+            version = self.store.connection.execute(
+                "SELECT sampler_policy_version FROM experiment_config_record"
+            ).fetchone()[0]
+            self.assertEqual(version, "balanced-matched/v1")
+            self.store.close()
+        self.store = open_sqlite_store(path)
 
     def test_strict_config_maps_to_normalized_graph_and_exports_lineage(self) -> None:
         release, presentation, candidates = self._catalog(reviewed=True)

@@ -49,12 +49,12 @@ class ExperimentCliTests(unittest.TestCase):
                 "fixture-default-v2",
                 "--output-dir",
                 str(output),
-                "--sample-size",
-                "2",
                 "--sample-seed",
                 "17",
                 "--master-seed",
                 "29",
+                "--repeat",
+                "2",
                 "--voters",
                 "2",
                 "--device",
@@ -551,7 +551,7 @@ class ExperimentCliTests(unittest.TestCase):
             self.assertTrue(png_files)
             self.assertTrue(all(path.is_file() for path in png_files))
 
-    def test_default_pipeline_runs_six_conditions_and_rerun_reuses_manifest(
+    def test_default_pipeline_runs_seed_repeats_and_rerun_reuses_manifest(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -578,16 +578,23 @@ class ExperimentCliTests(unittest.TestCase):
 
             self.assertIn("pipeline=complete", first)
             self.assertIn("status=resuming", second)
-            self.assertEqual(first_counts, (1, 6, 6))
+            # Two seed-repeat replicates, action-only x {support, opposition}:
+            # 2 matched sets and 2 x 2 = 4 runs/executions.
+            self.assertEqual(first_counts, (2, 4, 4))
             self.assertEqual(second_counts, first_counts)
             self.assertTrue((output / "manifest.json").is_file())
             self.assertTrue((output / "sample.json").is_file())
-            self.assertTrue((output / "run-config.json").is_file())
+            self.assertTrue((output / "run-config.repeat-0.json").is_file())
+            self.assertTrue((output / "run-config.repeat-1.json").is_file())
             config = json.loads(
-                (output / "run-config.json").read_text(encoding="utf-8")
+                (output / "run-config.repeat-0.json").read_text(encoding="utf-8")
             )
             self.assertEqual(config["sampling"]["max_new_tokens"], 2048)
-            self.assertTrue(tuple((output / "export").glob("*.parquet")))
+            self.assertEqual(config["sampler_policy"], "level-stratified/v1")
+            self.assertEqual(config["arms"], ["action-only"])
+            self.assertEqual(config["regimes"], ["support", "opposition"])
+            self.assertTrue(tuple((output / "export" / "repeat-0").glob("*.parquet")))
+            self.assertTrue(tuple((output / "export" / "aggregate").glob("*.parquet")))
             self.assertTrue(tuple((output / "plots").glob("*.png")))
 
             db.unlink()
@@ -633,7 +640,8 @@ class ExperimentCliTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM experiment_run WHERE status='complete'"
             ).fetchone()[0]
             connection.close()
-            self.assertEqual(completed_runs, 6)
+            # Two replicates x action-only x {support, opposition} = 4 runs.
+            self.assertEqual(completed_runs, 4)
             self.assertEqual(constructions, 1)
 
     def test_default_pipeline_recovers_commit_to_checkpoint_interruptions(self) -> None:
@@ -642,6 +650,7 @@ class ExperimentCliTests(unittest.TestCase):
             ("sample", "create"),
             ("matched-set", "create"),
             ("export",),
+            ("aggregate",),
             ("plot",),
         )
         for boundary in boundaries:
@@ -696,7 +705,8 @@ class ExperimentCliTests(unittest.TestCase):
                 )
                 connection.close()
                 self.assertIn("pipeline=complete", resumed)
-                self.assertEqual(counts, (1, 1, 1, 6))
+                # 1 release, 1 reused sample, 2 replicate matched sets, 4 runs.
+                self.assertEqual(counts, (1, 1, 2, 4))
 
     def test_default_pipeline_rejects_changed_dataset_bytes_on_resume(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -724,9 +734,7 @@ class ExperimentCliTests(unittest.TestCase):
             command, db, output = self._default_pipeline_command(root)
             self._invoke(command, generator=True)
             manifest_path = output / "manifest.json"
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest.pop("matched_set_id")
-            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertTrue(manifest_path.is_file())
             db.unlink()
             error = io.StringIO()
             with contextlib.redirect_stderr(error):
@@ -783,7 +791,6 @@ class ExperimentCliTests(unittest.TestCase):
             self._invoke(command, generator=True)
             manifest_path = output / "manifest.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest.pop("matched_set_id")
             manifest["sample_id"] = "replacement-sample-id"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             error = io.StringIO()

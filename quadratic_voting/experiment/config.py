@@ -202,11 +202,35 @@ class MatchedSetConfigV1(_StrictModel):
     master_seed: UInt64
     voter_count: PositiveStrictInt
     credit_budget: PositiveStrictInt = 100
-    sampler_policy: Literal["balanced-matched/v1"]
+    sampler_policy: Literal["balanced-matched/v1", "level-stratified/v1"]
     presentation_policy: Literal["setup-once-ids-later/v1"]
     tie_policy: Literal["uniform-seeded/v1"]
     action_format: Literal["json-with-rationale/v1"]
     execution_class: Literal["fixture", "pilot", "primary"]
+    # Default to the full arm x regime cross-product so configs created by this
+    # code version without an explicit subset still produce the six-run matrix.
+    # Reduced scenarios (the level-stratified default pilot) pass explicit
+    # subsets. Note: a config JSON persisted by an OLDER version that predates
+    # these fields will gain the defaulted arms/regimes when reloaded here and
+    # therefore hash differently than when first written; nothing in this MVP
+    # depends on cross-version hash stability of pre-existing on-disk configs.
+    arms: tuple[ElicitationArm, ...] = tuple(ElicitationArm)
+    regimes: tuple[VotingRegime, ...] = tuple(VotingRegime)
+
+    @field_validator("arms", "regimes")
+    @classmethod
+    def non_empty_unique(cls, value: tuple[object, ...]) -> tuple[object, ...]:
+        if not value:
+            raise ValueError(
+                "qv-run-config/v1 arms and regimes must each be a non-empty tuple so the "
+                "matched set has at least one (arm, regime) run"
+            )
+        if len(set(value)) != len(value):
+            raise ValueError(
+                "qv-run-config/v1 arms and regimes must not contain duplicate values; "
+                "duplicate (arm, regime) runs violate the matched_set uniqueness invariant"
+            )
+        return value
 
     @model_validator(mode="after")
     def sampled_execution_temperature(self) -> MatchedSetConfigV1:

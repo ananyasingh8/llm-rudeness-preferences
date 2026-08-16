@@ -48,9 +48,14 @@ FIELDS = (
 
 
 def write_fixture(path: Path) -> None:
+    # Modal per-annotator severity (mode, ties toward more negative) is noted per
+    # group so the fixture spans all five ConvAbuse severity levels {1,0,-1,-2,-3}
+    # required by the level-stratified default pilot. conv_ids are chosen so
+    # "c-clean" remains the lexicographically first source_row_id (several tests
+    # rely on records[0] being the clean candidate).
     groups = (
         (
-            "c-rude",
+            "c-rude",  # modal severity -2 (votes -1,-2,0 tie -> -2), label RUDE
             "Prior agent rude",
             "Prior user rude",
             "Agent rude candidate",
@@ -58,7 +63,7 @@ def write_fixture(path: Path) -> None:
             (-1, -2, 0),
         ),
         (
-            "c-clean",
+            "c-clean",  # modal severity 0, label NON_RUDE
             "Prior agent clean",
             "Prior user clean",
             "Agent clean candidate",
@@ -66,12 +71,28 @@ def write_fixture(path: Path) -> None:
             (0, 0, -1),
         ),
         (
-            "c-tie",
+            "c-tie",  # modal severity -3 (votes -3,1 tie -> -3), label AMBIGUOUS_TIE
             "Prior agent tie",
             "Prior user tie",
             "Agent tied candidate",
             "Maybe user",
             (-3, 1),
+        ),
+        (
+            "c-lvl-pos1",  # modal severity 1, label NON_RUDE
+            "Prior agent pos1",
+            "Prior user pos1",
+            "Agent pos1 candidate",
+            "Calm user",
+            (1, 1, 0),
+        ),
+        (
+            "c-lvl-neg1",  # modal severity -1, label RUDE
+            "Prior agent neg1",
+            "Prior user neg1",
+            "Agent neg1 candidate",
+            "Curt user",
+            (-1, -1, 0),
         ),
     )
     with path.open("w", encoding="utf-8", newline="") as handle:

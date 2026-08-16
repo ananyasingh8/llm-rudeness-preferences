@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from contextlib import AbstractContextManager
 
+from quadratic_voting.experiment.aggregate import aggregate_repeats
 from quadratic_voting.experiment.export import export_parquet
 from quadratic_voting.experiment.plots import render_plots
 from quadratic_voting.experiment.store import open_sqlite_store
@@ -65,6 +66,22 @@ def _plot(args: Any) -> int:
     return 0
 
 
+def _aggregate(args: Any) -> int:
+    repeats = int(args.repeats)
+    if repeats < 1:
+        raise ValueError(
+            f"Seed-repeat aggregation refused --repeats {repeats}; aggregate at least one "
+            "replicate. Validation failed in cli.export_cmds._aggregate before reading any "
+            "export. Pass --repeats >= 1 and retry."
+        )
+    input_root = Path(args.input)
+    inputs = [(index, input_root / f"repeat-{index}") for index in range(repeats)]
+    manifest = aggregate_repeats(inputs, Path(args.out))
+    for path in manifest.files:
+        print(path)
+    return 0
+
+
 def register(subparsers: _SubParsersAction[Any]) -> None:
     """Add whole-database ``export`` and Parquet-backed ``plot`` commands."""
     export_parser = subparsers.add_parser("export", help="export the SQLite database")
@@ -78,3 +95,12 @@ def register(subparsers: _SubParsersAction[Any]) -> None:
     plot_parser.add_argument("--export-dir", type=Path, required=True)
     plot_parser.add_argument("--out", type=Path, required=True)
     plot_parser.set_defaults(handler=_plot)
+
+    aggregate_parser = subparsers.add_parser(
+        "aggregate",
+        help="concatenate per-replicate seed-repeat exports into one directory",
+    )
+    aggregate_parser.add_argument("--input", type=Path, required=True)
+    aggregate_parser.add_argument("--repeats", type=int, required=True)
+    aggregate_parser.add_argument("--out", type=Path, required=True)
+    aggregate_parser.set_defaults(handler=_aggregate)

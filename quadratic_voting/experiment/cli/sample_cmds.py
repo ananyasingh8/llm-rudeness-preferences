@@ -8,10 +8,17 @@ from pathlib import Path
 
 from quadratic_voting.experiment.sampling import (
     candidates_by_label,
+    candidates_by_severity_level,
     create_balanced_sample,
+    create_level_stratified_sample,
 )
 from quadratic_voting.experiment.store import open_sqlite_store
-from quadratic_voting.experiment.types import ReleaseId, SampleId, TemplateId
+from quadratic_voting.experiment.types import (
+    ReleaseId,
+    SampleId,
+    SamplerPolicy,
+    TemplateId,
+)
 
 
 def _sample_size(value: str) -> int:
@@ -44,17 +51,29 @@ def _non_negative_integer(value: str) -> int:
 
 def _create(args: argparse.Namespace) -> int:
     release_id = ReleaseId(args.release_id)
+    policy = SamplerPolicy(args.policy)
     with open_sqlite_store(
         args.db, writer_lock=args.writer_lock, require_writer_lock=True
     ) as store:
-        sample_id = create_balanced_sample(
-            store,
-            release_id,
-            TemplateId(args.template_id),
-            size=args.size,
-            seed=args.seed,
-            candidates_by_label=candidates_by_label(store, release_id),
-        )
+        if policy is SamplerPolicy.LEVEL_STRATIFIED:
+            # The level-stratified policy draws exactly one candidate per ConvAbuse
+            # severity level (five candidates); --size is not consulted.
+            sample_id = create_level_stratified_sample(
+                store,
+                release_id,
+                TemplateId(args.template_id),
+                seed=args.seed,
+                candidates_by_level=candidates_by_severity_level(store, release_id),
+            )
+        else:
+            sample_id = create_balanced_sample(
+                store,
+                release_id,
+                TemplateId(args.template_id),
+                size=args.size,
+                seed=args.seed,
+                candidates_by_label=candidates_by_label(store, release_id),
+            )
     print(f"sample_id={sample_id} status=DRAFT")
     return 0
 
@@ -93,12 +112,22 @@ def register(
     sample = subparsers.add_parser("sample", help="candidate sample lifecycle")
     sample_sub = sample.add_subparsers(required=True)
     create = sample_sub.add_parser(
-        "create", help="create a deterministic balanced DRAFT sample"
+        "create",
+        help="create a deterministic balanced or level-stratified DRAFT sample",
     )
     create.add_argument("--release-id", required=True)
     create.add_argument("--template-id", required=True)
     create.add_argument("--size", type=_sample_size, default=50)
     create.add_argument("--seed", type=_non_negative_integer, required=True)
+    create.add_argument(
+        "--policy",
+        choices=[
+            SamplerPolicy.BALANCED_MATCHED.value,
+            SamplerPolicy.LEVEL_STRATIFIED.value,
+        ],
+        default=SamplerPolicy.BALANCED_MATCHED.value,
+        help="balanced two-stratum sample, or one candidate per severity level",
+    )
     create.set_defaults(handler=_create, mutates_db=True)
 
     freeze = sample_sub.add_parser(

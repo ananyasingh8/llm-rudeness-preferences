@@ -36,7 +36,11 @@ from llm_runtime.types import (
     TextGenerator,
 )
 
-MIN_CUDA_FREE_BYTES = 12_000_000_000
+# Sized to the smallest reviewed route so explicit CUDA fails fast before a
+# slow load: the E4B FP4 route needs ~6.5 GB, so an empty 8 GB card must
+# pass. The 31B routes need ~18 GB and OOM at load on smaller cards instead
+# of being caught here — acceptable, since explicit CUDA is opt-in.
+MIN_CUDA_FREE_BYTES = 6_500_000_000
 _GENERATION_LOCK = threading.RLock()
 
 

@@ -154,6 +154,31 @@ class RegistryTests(unittest.TestCase):
         ):
             resolve_route(ModelId.GEMMA_2_2B_IT, ProviderId.OPENROUTER, None)
 
+    def test_gemma_4_e4b_fp4_steering_route(self) -> None:
+        route = cast(
+            LocalTransformersRoute,
+            resolve_route(
+                ModelId.GEMMA_4_E4B_IT,
+                ProviderId.LOCAL,
+                QuantizationId.BITSANDBYTES_FP4,
+                required={Capability.LOCAL_ACTIVATIONS},
+            ),
+        )
+        self.assertIsInstance(route, LocalTransformersRoute)
+        self.assertEqual(route.artifact.repository, "google/gemma-4-E4B-it")
+        self.assertEqual(
+            route.artifact.revision, "ee0ef6023621cff504d758262d4e04895a5af4a2"
+        )
+        self.assertEqual(route.availability, RouteAvailability.ENABLED)
+        self.assertIsNotNone(route.bitsandbytes)
+        assert route.bitsandbytes is not None
+        self.assertEqual(route.bitsandbytes.quant_type.value, "fp4")
+
+        with self.assertRaisesRegex(
+            ModelRouteError, "not registered.*Supported routes.*Select"
+        ):
+            resolve_route(ModelId.GEMMA_4_E4B_IT, ProviderId.LOCAL, QuantizationId.BF16)
+
     def test_gemma_4_31b_base_fp4_extraction_route(self) -> None:
         route = cast(
             LocalTransformersRoute,

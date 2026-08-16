@@ -18,11 +18,8 @@ from pathlib import Path
 from bail.prompts.bail_methods import GREEN, SHUFFLE
 from bail_steering.main import (
     BASELINE_CONDITION,
-    CONDITIONS,
     RESPONSES_FILE,
     RESULTS_DIR,
-    STEER_FALLERS,
-    STEER_RISERS,
 )
 from emotion_probing.analyze.common import (
     BASELINE,
@@ -38,6 +35,14 @@ from emotion_probing.analyze.common import (
 )
 
 GROUP_ORDER = ("friendly", "neutral", "rude")
+
+
+def load_condition_lists(run_dir: Path) -> tuple[list[str], list[str], list[str]]:
+    """(ordered conditions, risers, fallers) from the run's own run_info."""
+    info = json.loads((run_dir / "run_info.json").read_text(encoding="utf-8"))
+    risers = list(info.get("risers") or [])
+    fallers = list(info.get("fallers") or [])
+    return [BASELINE_CONDITION] + risers + fallers, risers, fallers
 
 
 def find_run_dir(explicit: str | None) -> Path:
@@ -96,17 +101,20 @@ def rate_stats(rows: list[dict[str, str]]) -> dict[str, float]:
     return {"n_total": len(rows), "n_parsed": n, "rate": rate, "sem": sem}
 
 
-def condition_color(condition: str) -> str:
-    if condition in STEER_RISERS:
+def condition_color(condition: str, risers: list[str], fallers: list[str]) -> str:
+    if condition in risers:
         return DELTA_POSITIVE
-    if condition in STEER_FALLERS:
+    if condition in fallers:
         return DELTA_NEGATIVE
     return BASELINE
 
 
-def rate_chart(plt, stats, phase: str, path: Path) -> None:
+def rate_chart(
+    plt, stats, phase: str, path: Path, order: list[str],
+    risers: list[str], fallers: list[str],
+) -> None:
     """Horizontal bars of bail rate per condition, baseline rate as a line."""
-    present = [c for c in CONDITIONS if c in stats]
+    present = [c for c in order if c in stats]
     labels = [f"{c} (n={stats[c]['n_parsed']})" for c in present]
     figure, axes = styled_axes(plt, 7.5, 0.34 * len(present) + 1.2)
     axes.barh(
@@ -114,7 +122,7 @@ def rate_chart(plt, stats, phase: str, path: Path) -> None:
         [stats[c]["rate"] for c in present],
         xerr=[stats[c]["sem"] for c in present],
         height=0.7,
-        color=[condition_color(c) for c in present],
+        color=[condition_color(c, risers, fallers) for c in present],
         error_kw={"ecolor": MUTED, "elinewidth": 1},
     )
     axes.invert_yaxis()  # baseline first, then risers, then fallers
@@ -135,11 +143,14 @@ def rate_chart(plt, stats, phase: str, path: Path) -> None:
     save_figure(plt, figure, path)
 
 
-def group_heatmap(plt, rows: list[dict[str, str]], path: Path) -> None:
+def group_heatmap(
+    plt, rows: list[dict[str, str]], path: Path, order: list[str]
+) -> None:
     """Conditions x conversation groups, prompt-method bail rate per cell."""
     prompt_rows = [r for r in rows if r["phase"] == "prompt"]
     present = sorted(
-        {r["condition"] for r in prompt_rows}, key=list(CONDITIONS).index
+        {r["condition"] for r in prompt_rows},
+        key=lambda c: order.index(c) if c in order else len(order),
     )
     if not present:
         return
@@ -189,6 +200,7 @@ def main() -> None:
     args = parser.parse_args()
     run_dir = find_run_dir(args.run)
     rows = load_rows(run_dir)
+    order, risers, fallers = load_condition_lists(run_dir)
     out_dir = run_dir / "analysis"
     out_dir.mkdir(exist_ok=True)
     print(f"Analyzing {run_dir} ({len(rows)} generations)")
@@ -201,7 +213,7 @@ def main() -> None:
         baseline = rate_stats(
             [r for r in phase_rows if r["condition"] == BASELINE_CONDITION]
         )
-        for condition in CONDITIONS:
+        for condition in order:
             subset = [r for r in phase_rows if r["condition"] == condition]
             if not subset:
                 continue
@@ -248,12 +260,14 @@ def main() -> None:
         return
     if stats_by_phase["prompt"]:
         rate_chart(
-            plt, stats_by_phase["prompt"], "prompt", out_dir / "bail_rate_prompt.png"
+            plt, stats_by_phase["prompt"], "prompt",
+            out_dir / "bail_rate_prompt.png", order, risers, fallers,
         )
-        group_heatmap(plt, rows, out_dir / "bail_rate_by_group.png")
+        group_heatmap(plt, rows, out_dir / "bail_rate_by_group.png", order)
     if stats_by_phase["tool"]:
         rate_chart(
-            plt, stats_by_phase["tool"], "tool", out_dir / "bail_rate_tool.png"
+            plt, stats_by_phase["tool"], "tool",
+            out_dir / "bail_rate_tool.png", order, risers, fallers,
         )
 
 

@@ -1,69 +1,84 @@
-# Extracting base-model emotion vectors — runbook
+# Extracting emotion vectors — runbook
 
-Extracts the 20 target emotion vectors (top risers/fallers from the ConvAbuse
-run) from the **base** `google/gemma-4-31B`, 4-bit quantized, sweeping every
-layer from 20 to 59 in the same forward passes. Needs ~60 GB free disk and a
-24 GB GPU. All knobs are constants at the top of [extract.py](extract.py).
+Two extraction configs live in [extract.py](extract.py) (`--extraction` picks
+one; all knobs are constants at the top):
 
-There is no separate quantization step: `download` fetches the full bf16
-checkpoint (hence the 60 GB of disk), and `run` quantizes it to 4-bit
-(BitsAndBytes FP4, the same pinned recipe as the ConvAbuse run) on the fly
-while loading it onto the GPU — ~18 GB of VRAM once loaded. This is also why
-the model load takes several minutes each run.
+- **`gemma4-e4b` (default)** — all 171 emotions from the IT
+  `google/gemma-4-E4B-it`, 4-bit quantized at load, sweeping **every** layer
+  in the same forward passes. Stories (~18 per emotion) and the 40 neutral
+  paragraphs come from the vendored
+  [emotion_experiment](emotion_experiment/) submodule (sinievanderben's
+  replication of Anthropic's emotion-vectors method — our reference
+  implementation). ~3,100 forward passes on a small model: well under an
+  hour, no story download needed.
+- **`gemma4-31b-base`** — the original trimmed run against the base
+  `google/gemma-4-31B` (20 target emotions, gemotions story corpus), kept
+  exactly as it was when it produced
+  `results/2026-08-15_182042_extract-gemma4-31b-base/`.
+
+There is no separate quantization step: `download` fetches the bf16
+checkpoint and `run` quantizes it to 4-bit (BitsAndBytes FP4, the pinned
+recipe) on the fly while loading onto the GPU.
+
+## E4B (the current pipeline)
 
 ```
-# 0. one-time env sync (if not done since compressed-tensors/matplotlib were added)
-uv lock && uv sync
+# 0. one-time: make sure the submodule is checked out
+git submodule update --init emotion_probing/emotion_experiment
 
-# 1. one-time download: base checkpoint (~60 GB) + story corpus (~433 MB)
+# 1. one-time download: E4B checkpoint (~8 GB); stories are already vendored
 uv run python -m emotion_probing.extract download
 
 # 2. smoke test (~1 min): 2 stories per emotion
 uv run python -m emotion_probing.extract run --device cuda --limit 2
 
-# 3. the real run (~3,900 forward passes, roughly an hour)
+# 3. the real run (~3,100 forward passes, sweeping all 42 layers)
 uv run python -m emotion_probing.extract run --device cuda
 
 # interrupted? continue where it left off (per-emotion granularity)
 uv run python -m emotion_probing.extract run --device cuda --resume
 ```
 
-Output lands in `results/<timestamp>_extract-gemma4-31b-base/`:
+Output lands in `results/<timestamp>_extract-gemma4-e4b-it/`:
 
-- `gemma4-31b-base_emotion_vectors_layer<N>.npz` — one complete vector set per
-  swept layer (base-model-prefixed so they can't be confused with the vendored
-  IT-model files).
-- `layer_quality.json` — the per-layer scorecard: valence separation (opposite
-  emotions pointing apart; more negative is better), synonym coherence
-  (angry/mad/furious aligned; higher is better), the combined score, and —
-  where a vendored IT-model file exists for that layer — the mean cosine to
-  the IT vectors. The run prints this table and names the best-scoring layer.
-- `gemma4-31b-base_global_means.npz`, `run_info.json`, `extraction_details.json`.
+- `gemma4-e4b-it_emotion_vectors_layer<N>.npz` — one complete 171-emotion
+  vector set per swept layer.
+- `layer_quality.json` — the per-layer scorecard: valence separation
+  (opposite emotions pointing apart; more negative is better), synonym
+  coherence (angry/mad/furious aligned; higher is better), and the combined
+  score. The run prints this table and names the best-scoring layer.
+- `gemma4-e4b-it_global_means.npz`, `run_info.json`, `extraction_details.json`.
 
 **Picking the layer**: read the printed table (or `layer_quality.json`), and
 choose a layer on a stable plateau of good scores rather than a lone spike.
-That layer's npz is the one to use downstream; the other 39 are the sweep
-evidence.
 
-**After picking — wire the probing experiment**: set the two constants near
-the top of [main.py](main.py):
+**After picking — wire the downstream steps** (all constants near the top of
+their files):
 
-```python
-BASE_PROBE_LAYER = <the chosen layer>
-BASE_VECTORS_RUN = "<the extraction run folder name>"
+1. Probing ([main.py](main.py)): set `E4B_PROBE_LAYER` and
+   `E4B_VECTORS_RUN`, then
+   `uv run python -m emotion_probing.main run --device cuda`
+   (convabuse-e4b is the default experiment) and
+   `python -m emotion_probing.analyze`.
+2. Steering ([../bail_steering/main.py](../bail_steering/main.py)): set
+   `STEER_LAYER` + `STEER_VECTORS_RUN` (same layer/run), then — after the
+   probing analysis — `STEER_RISERS`/`STEER_FALLERS` from its top-10
+   risers/fallers vs band 0.
+
+Until pinned, each downstream step fails immediately with these same
+instructions. The loaders cross-check the pinned run's model and layer, so a
+wrong pin errors instead of silently mixing models.
+
+## 31B base (the earlier run)
+
+```
+uv run python -m emotion_probing.extract --extraction gemma4-31b-base download   # ~60 GB + 433 MB stories
+uv run python -m emotion_probing.extract --extraction gemma4-31b-base run --device cuda
 ```
 
-Then the base-model probing experiment runs like any other:
-
-```
-uv run python -m emotion_probing.main --experiment convabuse-31b-base run --device cuda
-uv run python -m emotion_probing.analyze
-```
-
-Until both constants are set, that experiment fails immediately with these
-same instructions (the model `download` works regardless). The loader
-cross-checks the pinned run's model and layer, so a wrong pin errors instead
-of silently mixing models.
+Same outputs with the `gemma4-31b-base` prefix, layers 20–59, plus the
+`it_cosine` column (cosine vs the vendored IT layer-40 vectors, width
+matches). Wired into probing via `BASE_PROBE_LAYER`/`BASE_VECTORS_RUN`.
 
 Note: a `--limit` smoke run and the full run must use separate run folders
 (`--resume` enforces matching limits); just omit `--resume` after a smoke test.

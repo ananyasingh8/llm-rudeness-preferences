@@ -96,12 +96,14 @@ class ExperimentId(StrEnum):
     CONVABUSE_31B = "convabuse-31b"
     CONVABUSE_31B_LOCAL_QUANT = "convabuse-31b-local-quant"
     CONVABUSE_31B_BASE = "convabuse-31b-base"
+    CONVABUSE_E4B = "convabuse-e4b"
 
 
 class VectorSource(StrEnum):
     EMOTIONSCOPE = "emotionscope"
     GEMOTIONS = "gemotions"
     EXTRACTED_BASE = "extracted-base"
+    EXTRACTED_E4B = "extracted-e4b"
 
 
 class DatasetId(StrEnum):
@@ -137,6 +139,12 @@ class ExperimentConfig:
 # convabuse-31b-base experiment fails with instructions; download still works.
 BASE_PROBE_LAYER: int | None = 40  # picked from the extraction sweep's scorecard
 BASE_VECTORS_RUN: str | None = "2026-08-15_182042_extract-gemma4-31b-base"
+
+# --- E4B probing: same pinning pattern, from the gemma4-e4b extraction -------
+# (`uv run python -m emotion_probing.extract run` — the default extraction —
+# then pick the layer from its layer_quality.json scorecard).
+E4B_PROBE_LAYER: int | None = None
+E4B_VECTORS_RUN: str | None = None
 
 # --- Experiment constants: edit these to change the model setups. ------------
 EXPERIMENTS: dict[ExperimentId, ExperimentConfig] = {
@@ -181,8 +189,18 @@ EXPERIMENTS: dict[ExperimentId, ExperimentConfig] = {
         token_limit=512,
         prompt_style="transcript",
     ),
+    ExperimentId.CONVABUSE_E4B: ExperimentConfig(
+        name=ExperimentId.CONVABUSE_E4B,
+        model_id=ModelId.GEMMA_4_E4B_IT,
+        quantization_id=QuantizationId.BITSANDBYTES_FP4,
+        probe_layer=E4B_PROBE_LAYER if E4B_PROBE_LAYER is not None else -1,
+        vectors=VectorSource.EXTRACTED_E4B,
+        dataset=DatasetId.CONVABUSE,
+        expected_width=2_560,
+        token_limit=512,
+    ),
 }
-DEFAULT_EXPERIMENT = ExperimentId.CONVABUSE_31B
+DEFAULT_EXPERIMENT = ExperimentId.CONVABUSE_E4B
 
 PACKAGE_DIR = Path(__file__).parent
 RESULTS_DIR = PACKAGE_DIR / "results"
@@ -270,32 +288,51 @@ def _load_gemotions_vectors(probe_layer: int) -> tuple[list[str], torch.Tensor]:
     return names, matrix
 
 
-def _extracted_base_vectors_path() -> Path:
-    """Resolve the pinned base-model vectors file, or explain how to pin it."""
-    if BASE_PROBE_LAYER is None or BASE_VECTORS_RUN is None:
-        raise ProbeError(
-            "The convabuse-31b-base experiment is not pinned yet. Run the "
-            "extraction sweep (`uv run python -m emotion_probing.extract run`, "
-            "see extract_vectors.md), pick the winning layer from "
-            "layer_quality.json (prefer a plateau over a lone spike), then set "
-            "BASE_PROBE_LAYER and BASE_VECTORS_RUN at the top of "
-            "emotion_probing/main.py."
+def _extraction_pins(
+    vectors: VectorSource,
+) -> tuple[int | None, str | None, str, str, str]:
+    """(layer, run, npz prefix, pin-constant names, extraction CLI name)."""
+    if vectors is VectorSource.EXTRACTED_BASE:
+        return (
+            BASE_PROBE_LAYER,
+            BASE_VECTORS_RUN,
+            "gemma4-31b-base",
+            "BASE_PROBE_LAYER and BASE_VECTORS_RUN",
+            "gemma4-31b-base",
         )
     return (
-        RESULTS_DIR
-        / BASE_VECTORS_RUN
-        / f"gemma4-31b-base_emotion_vectors_layer{BASE_PROBE_LAYER}.npz"
+        E4B_PROBE_LAYER,
+        E4B_VECTORS_RUN,
+        "gemma4-e4b-it",
+        "E4B_PROBE_LAYER and E4B_VECTORS_RUN",
+        "gemma4-e4b",
     )
 
 
-def _load_extracted_base_vectors(
-    route: LocalTransformersRoute,
+def _extracted_vectors_path(vectors: VectorSource) -> Path:
+    """Resolve the pinned extracted-vectors file, or explain how to pin it."""
+    layer, run, prefix, pin_names, extraction = _extraction_pins(vectors)
+    if layer is None or run is None:
+        raise ProbeError(
+            "This experiment is not pinned yet. Run the extraction sweep "
+            f"(`uv run python -m emotion_probing.extract --extraction "
+            f"{extraction} run`, see extract_vectors.md), pick the winning "
+            "layer from layer_quality.json (prefer a plateau over a lone "
+            f"spike), then set {pin_names} at the top of "
+            "emotion_probing/main.py."
+        )
+    return RESULTS_DIR / run / f"{prefix}_emotion_vectors_layer{layer}.npz"
+
+
+def _load_extracted_vectors(
+    vectors: VectorSource, route: LocalTransformersRoute
 ) -> tuple[list[str], torch.Tensor]:
-    path = _extracted_base_vectors_path()
+    layer, _, _, pin_names, _ = _extraction_pins(vectors)
+    path = _extracted_vectors_path(vectors)
     if not path.exists():
         raise ProbeError(
-            f"Emotion vectors file not found: {path}. Check BASE_VECTORS_RUN "
-            "and BASE_PROBE_LAYER against the extraction run's actual outputs."
+            f"Emotion vectors file not found: {path}. Check {pin_names} "
+            "against the extraction run's actual outputs."
         )
     run_info_file = path.parent / "run_info.json"
     if run_info_file.exists():
@@ -307,10 +344,10 @@ def _load_extracted_base_vectors(
                 f"{route.artifact.repository}. Emotion vectors are "
                 "model-specific; fix the pinning."
             )
-        if BASE_PROBE_LAYER not in info.get("probe_layers", []):
+        if layer not in info.get("probe_layers", []):
             raise ProbeError(
-                f"BASE_PROBE_LAYER={BASE_PROBE_LAYER} was not part of the "
-                "pinned extraction run's probe_layers; fix the pinning."
+                f"Pinned probe layer {layer} was not part of the pinned "
+                "extraction run's probe_layers; fix the pinning."
             )
     saved = np.load(path)
     names = list(saved.files)
@@ -329,8 +366,8 @@ def load_vectors(
         return _load_emotionscope_vectors(route, config.probe_layer)
     if config.vectors is VectorSource.GEMOTIONS:
         return _load_gemotions_vectors(config.probe_layer)
-    if config.vectors is VectorSource.EXTRACTED_BASE:
-        return _load_extracted_base_vectors(route)
+    if config.vectors in (VectorSource.EXTRACTED_BASE, VectorSource.EXTRACTED_E4B):
+        return _load_extracted_vectors(config.vectors, route)
     raise ProbeError(f"Unknown vectors source {config.vectors!r}.")
 
 
@@ -1114,8 +1151,8 @@ def build_input_fingerprints(
             / f"emotion_vectors_layer{config.probe_layer}.npz"
         )
         cluster_path: Path | None = GEMOTIONS_ANALYSIS_FILE
-    elif config.vectors is VectorSource.EXTRACTED_BASE:
-        vector_path = _extracted_base_vectors_path()
+    elif config.vectors in (VectorSource.EXTRACTED_BASE, VectorSource.EXTRACTED_E4B):
+        vector_path = _extracted_vectors_path(config.vectors)
         cluster_path = GEMOTIONS_ANALYSIS_FILE
     else:
         vector_path = EMOTIONSCOPE_VECTORS_FILE
@@ -1212,6 +1249,8 @@ def build_run_provenance(
             if config.vectors is VectorSource.GEMOTIONS
             else BASE_VECTORS_RUN
             if config.vectors is VectorSource.EXTRACTED_BASE
+            else E4B_VECTORS_RUN
+            if config.vectors is VectorSource.EXTRACTED_E4B
             else None
         ),
         "limit": limit,

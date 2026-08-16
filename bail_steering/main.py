@@ -8,8 +8,13 @@ wellbeing check (bail/), we steer its residual stream with one emotion vector
 at a time and measure how the bail rate moves.
 
 Design (one condition per emotion, plus an unsteered baseline):
-  - risers (emotions that went UP on rude conversations) steered at +0.1
-  - fallers (emotions that went DOWN) steered at -0.1
+  - the model is Gemma 4 E4B IT (4-bit at load), and the emotion vectors are
+    the ones extracted from that same model by emotion_probing/extract.py
+    (--extraction gemma4-e4b, stories from the vendored sinievanderben/
+    emotion_experiment replication)
+  - conditions: risers (emotions that went UP on rude conversations in the
+    convabuse-e4b probing run) steered at +0.1, fallers at -0.1 — pinned in
+    STEER_RISERS/STEER_FALLERS after that run's analysis
   - steering strength follows Anthropic's convention: units are fractions of
     the residual-stream norm, so each generated token gets a push of exactly
     |coefficient| x (its own residual norm) in the emotion's direction. The
@@ -24,8 +29,11 @@ Design (one condition per emotion, plus an unsteered baseline):
     over the OpenRouter API so the hook can reach the activations.
 
 The full grid is 21 conditions x 1501 conversations x 3 generations
-= 94,563 generations -- several GPU-days on one RTX 4090. Runs are resumable
-per generation, and --conditions lets you run/prioritize a subset.
+= 94,563 generations. Runs are resumable per generation, and --conditions
+lets you run/prioritize a subset (baseline first).
+
+Until the three pin blocks below are set (steering layer + extraction run,
+then the riser/faller lists), `run` fails with instructions.
 
 Usage (from the repo root, on the machine with the GPU):
   uv run python -m bail_steering.main download
@@ -71,39 +79,26 @@ from llm_runtime.transformers import (
 )
 
 # --- Experiment constants -----------------------------------------------------
-MODEL_ID = ModelId.GEMMA_4_31B_IT
+MODEL_ID = ModelId.GEMMA_4_E4B_IT
 QUANTIZATION_ID = QuantizationId.BITSANDBYTES_FP4
-STEER_LAYER = 40  # the layer the gemotions vectors were extracted from
 COEFFICIENT = 0.1  # fraction of residual-stream norm (Anthropic's units)
-# Top 20 movers from the ConvAbuse emotion-probing run (same hardcoded list
-# as emotion_probing/extract.py). Risers get +COEFFICIENT, fallers get
-# -COEFFICIENT.
-STEER_RISERS = (
-    "grumpy",
-    "hostile",
-    "mad",
-    "insulted",
-    "offended",
-    "angry",
-    "hateful",
-    "upset",
-    "sullen",
-    "furious",
-)
-STEER_FALLERS = (
-    "jubilant",
-    "awestruck",
-    "amused",
-    "delighted",
-    "elated",
-    "ecstatic",
-    "excited",
-    "thrilled",
-    "euphoric",
-    "amazed",
-)
+
+# --- Pins from the upstream E4B pipeline steps (human-picked, in order): ------
+# 1. STEER_LAYER + STEER_VECTORS_RUN: after the extraction sweep
+#    (`uv run python -m emotion_probing.extract run`), pick the layer from
+#    its layer_quality.json (prefer a plateau over a lone spike) and name the
+#    extraction results folder. Use the same layer the probing experiment
+#    pins as E4B_PROBE_LAYER in emotion_probing/main.py.
+# 2. STEER_RISERS + STEER_FALLERS: after the convabuse-e4b probing run, the
+#    top-10 risers and top-10 fallers by shift vs band 0 (pooled avg band)
+#    from its analysis. Risers get +COEFFICIENT, fallers get -COEFFICIENT.
+STEER_LAYER: int | None = None
+STEER_VECTORS_RUN: str | None = None  # e.g. "2026-08-16_..._extract-gemma4-e4b-it"
+STEER_RISERS: tuple[str, ...] | None = None
+STEER_FALLERS: tuple[str, ...] | None = None
+
 BASELINE_CONDITION = "baseline"
-CONDITIONS = (BASELINE_CONDITION,) + STEER_RISERS + STEER_FALLERS
+VECTORS_PREFIX = "gemma4-e4b-it"  # npz prefix written by the extraction
 
 PHASES = ("prompt", "tool")
 BAIL_MODEL_NAME = "Gemma"  # own-model name in the bail tool text (bail/config.py)
@@ -114,20 +109,12 @@ TEMPERATURE = 1.0
 TOP_P = 0.95
 TOP_K = 64
 SEED = 42
-BATCH_SIZE = 4  # conversations generated at once; lower this if CUDA OOMs
-# (8 OOMed on a 24 GB RTX 4090: the 4-bit model leaves only ~2 GB of working
-# room, and the KV cache + attention buffers of the longest batches exceed it.)
+BATCH_SIZE = 16  # conversations generated at once; lower this if CUDA OOMs
+# (E4B is ~5 GB in 4-bit, so unlike the 31B there is ample KV-cache headroom.)
 
 REPO_ROOT = Path(__file__).parent.parent
 SAMPLE_FILE = REPO_ROOT / "bail" / "data" / "convabuse_sample.csv"
-VECTORS_FILE = (
-    REPO_ROOT
-    / "emotion_probing"
-    / "gemotions"
-    / "results"
-    / "gemma4-31b"
-    / f"emotion_vectors_layer{STEER_LAYER}.npz"
-)
+EXTRACTION_RESULTS_DIR = REPO_ROOT / "emotion_probing" / "results"
 RESULTS_DIR = Path(__file__).parent / "results"
 RESPONSES_FILE = "responses.csv"
 RESPONSE_COLUMNS = (
@@ -190,19 +177,81 @@ class SteeringHook:
         return steered
 
 
+def require_pins() -> tuple[int, str, tuple[str, ...], tuple[str, ...]]:
+    """The pinned (layer, extraction run, risers, fallers), or instructions."""
+    if STEER_LAYER is None or STEER_VECTORS_RUN is None:
+        raise SteeringError(
+            "STEER_LAYER and STEER_VECTORS_RUN are not pinned yet. Run the "
+            "E4B extraction sweep (`uv run python -m emotion_probing.extract "
+            "run`), pick the layer from its layer_quality.json (prefer a "
+            "plateau over a lone spike), then set both constants at the top "
+            "of bail_steering/main.py."
+        )
+    if STEER_RISERS is None or STEER_FALLERS is None:
+        raise SteeringError(
+            "STEER_RISERS and STEER_FALLERS are not pinned yet. Run the "
+            "probing experiment (`uv run python -m emotion_probing.main "
+            "--experiment convabuse-e4b run`) and its analysis, then set the "
+            "top-10 risers and fallers (by shift vs band 0) at the top of "
+            "bail_steering/main.py."
+        )
+    return STEER_LAYER, STEER_VECTORS_RUN, STEER_RISERS, STEER_FALLERS
+
+
+def conditions() -> tuple[str, ...]:
+    """All 21 run conditions: baseline plus the pinned steered emotions."""
+    _, _, risers, fallers = require_pins()
+    return (BASELINE_CONDITION,) + risers + fallers
+
+
+def vectors_path() -> Path:
+    layer, run, _, _ = require_pins()
+    return (
+        EXTRACTION_RESULTS_DIR
+        / run
+        / f"{VECTORS_PREFIX}_emotion_vectors_layer{layer}.npz"
+    )
+
+
+def validate_vector_pins(route) -> None:
+    """The pinned extraction run must match the steering model exactly."""
+    layer, _, _, _ = require_pins()
+    path = vectors_path()
+    if not path.exists():
+        raise SteeringError(
+            f"Emotion vectors file not found: {path}. Check STEER_VECTORS_RUN "
+            "and STEER_LAYER against the extraction run's actual outputs."
+        )
+    run_info_file = path.parent / "run_info.json"
+    if run_info_file.exists():
+        info = json.loads(run_info_file.read_text(encoding="utf-8"))
+        if info.get("repository") != route.artifact.repository:
+            raise SteeringError(
+                f"The pinned vectors were extracted from "
+                f"{info.get('repository')} but the steering route loads "
+                f"{route.artifact.repository}. Emotion vectors are "
+                "model-specific; fix the pinning."
+            )
+        if layer not in info.get("probe_layers", []):
+            raise SteeringError(
+                f"STEER_LAYER={layer} was not part of the pinned extraction "
+                "run's probe_layers; fix the pinning."
+            )
+
+
 def load_direction(condition: str) -> tuple[torch.Tensor, float]:
     """The unit steering direction and signed coefficient for a condition."""
-    if not VECTORS_FILE.exists():
-        raise SteeringError(f"Emotion vectors file not found: {VECTORS_FILE}")
-    data = np.load(VECTORS_FILE)
+    _, _, risers, _ = require_pins()
+    path = vectors_path()
+    data = np.load(path)
     if condition not in data.files:
         raise SteeringError(
-            f"Emotion '{condition}' not in {VECTORS_FILE.name} "
+            f"Emotion '{condition}' not in {path.name} "
             f"({len(data.files)} emotions available)."
         )
     vector = torch.from_numpy(data[condition]).float()
     direction = vector / vector.norm()
-    sign = 1.0 if condition in STEER_RISERS else -1.0
+    sign = 1.0 if condition in risers else -1.0
     return direction, sign * COEFFICIENT
 
 
@@ -410,10 +459,20 @@ def run(
     device: Device,
     limit: int | None,
     resume: bool,
-    conditions: Sequence[str],
+    selected: Sequence[str] | None,
     phases: Sequence[str],
 ) -> None:
     route = resolve_steering_route()
+    validate_vector_pins(route)
+    steer_layer, steer_run, risers, fallers = require_pins()
+    all_conditions = conditions()
+    run_conditions = list(selected) if selected else list(all_conditions)
+    unknown = [name for name in run_conditions if name not in all_conditions]
+    if unknown:
+        raise SteeringError(
+            f"unknown condition(s) {unknown}; choose from "
+            f"{', '.join(all_conditions)}"
+        )
     rows = load_sample()
     run_info = {
         "experiment": "bail-steering",
@@ -422,12 +481,13 @@ def run(
         "quantization_id": route.quantization_id.value,
         "repository": route.artifact.repository,
         "revision": route.artifact.revision,
-        "steer_layer": STEER_LAYER,
+        "steer_layer": steer_layer,
         "coefficient": COEFFICIENT,
         "coefficient_units": "fraction of residual stream norm (unit direction)",
-        "risers": list(STEER_RISERS),
-        "fallers": list(STEER_FALLERS),
-        "vectors_file": str(VECTORS_FILE.relative_to(REPO_ROOT)),
+        "risers": list(risers),
+        "fallers": list(fallers),
+        "vectors_run": steer_run,
+        "vectors_file": str(vectors_path().relative_to(REPO_ROOT)),
         "sample_file": str(SAMPLE_FILE.relative_to(REPO_ROOT)),
         "sample_rows": len(rows),
         "orderings": list(ORDERINGS),
@@ -444,11 +504,11 @@ def run(
     print(f"Loading {route.artifact.repository} ({route.quantization_id.value})...")
     runtime = create_transformers_runtime(route, cache_dir=cache_dir, device=device)
     model, tokenizer = runtime.model, runtime.tokenizer
-    block = _decoder_block(model, STEER_LAYER)
+    block = _decoder_block(model, steer_layer)
     torch.manual_seed(SEED)
 
     all_tasks = build_tasks(rows, phases)
-    for condition in conditions:
+    for condition in run_conditions:
         tasks = [
             task
             for task in all_tasks
@@ -528,13 +588,8 @@ def resolve_steering_route() -> LocalTransformersRoute:
 
 
 def _conditions_arg(value: str) -> tuple[str, ...]:
-    names = tuple(name.strip() for name in value.split(",") if name.strip())
-    unknown = [name for name in names if name not in CONDITIONS]
-    if unknown:
-        raise argparse.ArgumentTypeError(
-            f"unknown condition(s) {unknown}; choose from {', '.join(CONDITIONS)}"
-        )
-    return names
+    # Validated against the pinned condition list inside run().
+    return tuple(name.strip() for name in value.split(",") if name.strip())
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -571,7 +626,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--conditions",
         type=_conditions_arg,
-        default=CONDITIONS,
+        default=None,
         help="comma-separated subset of conditions (default: all 21)",
     )
     run_parser.add_argument(

@@ -131,7 +131,9 @@ def _invoke(args: argparse.Namespace, command: list[str]) -> str:
 
 def _default_generator(args: argparse.Namespace) -> VoterGenerator:
     """Construct the reviewed pipeline's one local Gemma generator."""
-    route = resolve_route(ModelId.GEMMA_4_E2B_IT, ProviderId.LOCAL, QuantizationId.BF16)
+    route = resolve_route(
+        ModelId.GEMMA_4_E4B_IT, ProviderId.LOCAL, QuantizationId.BITSANDBYTES_FP4
+    )
     if not isinstance(route, LocalTransformersRoute):
         raise AssertionError("the reviewed default Gemma route must be local")
     runtime = create_transformers_runtime(
@@ -290,7 +292,9 @@ def _build_config(
             "Default pipeline requires exactly the six current instruction templates; "
             f"found {sorted(templates)} for version {INSTRUCTION_TEMPLATE_VERSION}."
         )
-    route = resolve_route(ModelId.GEMMA_4_E2B_IT, ProviderId.LOCAL, QuantizationId.BF16)
+    route = resolve_route(
+        ModelId.GEMMA_4_E4B_IT, ProviderId.LOCAL, QuantizationId.BITSANDBYTES_FP4
+    )
     if not isinstance(route, LocalTransformersRoute):
         raise AssertionError("the reviewed default Gemma route must be local")
 
@@ -344,7 +348,12 @@ def _build_config(
                 "artifact_revision": route.artifact.revision,
                 "tokenizer_repository": route.artifact.repository,
                 "tokenizer_revision": route.artifact.revision,
-                "dtype": "bf16",
+                # dtype must equal the run-preflight convention
+                # (cli.run_cmds._current_run_definition uses
+                # route.quantization_id.value) so the route_registry_hash computed
+                # at matched-set creation matches the hash recomputed at execution
+                # preflight; otherwise the run is refused as route drift.
+                "dtype": route.quantization_id.value,
             },
             "prompts": {
                 "setup": selector("setup"),
@@ -858,7 +867,9 @@ def _model_provenance(
 def _bind_model_provenance(
     args: argparse.Namespace, manifest: dict[str, Any], manifest_path: Path
 ) -> None:
-    route = resolve_route(ModelId.GEMMA_4_E2B_IT, ProviderId.LOCAL, QuantizationId.BF16)
+    route = resolve_route(
+        ModelId.GEMMA_4_E4B_IT, ProviderId.LOCAL, QuantizationId.BITSANDBYTES_FP4
+    )
     if not isinstance(route, LocalTransformersRoute):
         raise AssertionError("the reviewed default Gemma route must be local")
     model_path = download_transformers_artifact(route, args.cache_dir)

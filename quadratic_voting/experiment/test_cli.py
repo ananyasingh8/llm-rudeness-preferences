@@ -853,7 +853,9 @@ class ExperimentCliTests(unittest.TestCase):
             for name in pipeline_cmds._MODEL_SNAPSHOT_FILES:
                 (snapshot / name).write_bytes(name.encode())
             route = resolve_route(
-                ModelId.GEMMA_4_E2B_IT, ProviderId.LOCAL, QuantizationId.BF16
+                ModelId.GEMMA_4_E4B_IT,
+                ProviderId.LOCAL,
+                QuantizationId.BITSANDBYTES_FP4,
             )
             assert isinstance(route, LocalTransformersRoute)
             args = argparse.Namespace(cache_dir=root)

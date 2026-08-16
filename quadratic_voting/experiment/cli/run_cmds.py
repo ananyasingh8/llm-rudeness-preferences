@@ -146,7 +146,7 @@ def _default_generator(
         QuantizationId(definition.quantization_id),
     )
     if not isinstance(route, LocalTransformersRoute):
-        raise AssertionError("the closed Gemma BF16 route must be local")
+        raise AssertionError("the closed Gemma local route must be local")
     runtime = create_transformers_runtime(
         route, cache_dir=args.cache_dir, device=args.device
     )

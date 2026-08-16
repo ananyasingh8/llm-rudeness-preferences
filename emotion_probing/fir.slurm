@@ -40,8 +40,23 @@ if [[ "$RESUME" == 1 && -n "$LIMIT" ]]; then
     exit 2
 fi
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname -- "$SCRIPT_DIR")"
+# Locate the project root. Under Slurm the script runs from a spool copy, so
+# $BASH_SOURCE is unusable; use $SLURM_SUBMIT_DIR (the dir sbatch was run from)
+# and walk up to the directory that holds pyproject.toml. Fall back to the
+# script location for direct, non-Slurm execution.
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+    PROJECT_DIR="$SLURM_SUBMIT_DIR"
+else
+    PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
+while [[ "$PROJECT_DIR" != "/" && ! -f "$PROJECT_DIR/pyproject.toml" ]]; do
+    PROJECT_DIR="$(dirname -- "$PROJECT_DIR")"
+done
+if [[ ! -f "$PROJECT_DIR/pyproject.toml" ]]; then
+    printf 'error: could not locate project root (pyproject.toml) from %s\n' \
+        "${SLURM_SUBMIT_DIR:-${BASH_SOURCE[0]}}" >&2
+    exit 1
+fi
 cd "$PROJECT_DIR"
 
 if [[ ! -x .venv/bin/python ]]; then

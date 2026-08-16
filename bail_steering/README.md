@@ -56,6 +56,10 @@ partial results are already informative.
 ## Running (on the GPU machine, from the repo root)
 
 ```
+# once per terminal: reduces allocator fragmentation (memory is tight --
+# the loaded model leaves ~2 GB of the 4090's 24 GB for generation)
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 # one-time; no-op if the convabuse-31b-local-quant checkpoint is cached
 uv run python -m bail_steering.main download
 

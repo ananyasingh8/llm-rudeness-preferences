@@ -114,7 +114,9 @@ TEMPERATURE = 1.0
 TOP_P = 0.95
 TOP_K = 64
 SEED = 42
-BATCH_SIZE = 8  # conversations generated at once; lower this if CUDA OOMs
+BATCH_SIZE = 4  # conversations generated at once; lower this if CUDA OOMs
+# (8 OOMed on a 24 GB RTX 4090: the 4-bit model leaves only ~2 GB of working
+# room, and the KV cache + attention buffers of the longest batches exceed it.)
 
 REPO_ROOT = Path(__file__).parent.parent
 SAMPLE_FILE = REPO_ROOT / "bail" / "data" / "convabuse_sample.csv"

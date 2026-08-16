@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 from matplotlib.patches import Rectangle
 from matplotlib.colors import to_rgba
 
+from quadratic_voting.analyze.__main__ import _confirm_replacement, _publish
 from quadratic_voting.experiment.export import export_parquet
 from quadratic_voting.experiment.snapshots import (
     aggregate_preference_agreement,
@@ -31,6 +34,50 @@ from quadratic_voting.experiment.test_export import AnalysisFixture
 
 
 class SnapshotTests(AnalysisFixture):
+    def test_analysis_replacement_confirmation_and_restore(self) -> None:
+        out = self.root / "analysis"
+        out.mkdir()
+        marker = out / "marker.txt"
+        marker.write_text("old", encoding="utf-8")
+        with (
+            mock.patch.object(sys.stdin, "isatty", return_value=True),
+            mock.patch("builtins.input", return_value="yes") as prompt,
+        ):
+            _confirm_replacement(out, overwrite=False)
+        prompt.assert_called_once_with(
+            f"Analysis output already exists at {out}. Replace it? [y/N] "
+        )
+        with (
+            mock.patch.object(sys.stdin, "isatty", return_value=True),
+            mock.patch("builtins.input", return_value="no"),
+            self.assertRaisesRegex(FileExistsError, "replacement cancelled"),
+        ):
+            _confirm_replacement(out, overwrite=False)
+        self.assertEqual(marker.read_text(encoding="utf-8"), "old")
+
+        staging = self.root / "staging"
+        staging.mkdir()
+        (staging / "marker.txt").write_text("new", encoding="utf-8")
+        replace = os.replace
+        replacement_count = 0
+
+        def fail_publication(source: Path, destination: Path) -> None:
+            nonlocal replacement_count
+            replacement_count += 1
+            if replacement_count == 2:
+                raise OSError("fixture publication failure")
+            replace(source, destination)
+
+        with (
+            mock.patch(
+                "quadratic_voting.analyze.__main__.os.replace",
+                side_effect=fail_publication,
+            ),
+            self.assertRaisesRegex(OSError, "fixture publication failure"),
+        ):
+            _publish(staging, out)
+        self.assertEqual(marker.read_text(encoding="utf-8"), "old")
+
     def test_timeline_payload_keeps_persisted_source_turns_in_order(self) -> None:
         """The renderer must not reconstruct omitted context from another source."""
         export_dir = self.root / "exports"
@@ -662,7 +709,7 @@ class SnapshotTests(AnalysisFixture):
                 sys.executable,
                 "-m",
                 "quadratic_voting.analyze",
-                "--export-dir",
+                "--input-dir",
                 str(export_dir),
                 "--out",
                 str(out_dir),
@@ -672,6 +719,61 @@ class SnapshotTests(AnalysisFixture):
             check=False,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+        marker = out_dir / "existing-marker.txt"
+        marker.write_text("preserve", encoding="utf-8")
+        refused = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "quadratic_voting.analyze",
+                "--input-dir",
+                str(export_dir),
+                "--out",
+                str(out_dir),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn(
+            "non-interactive replacement requires --overwrite", refused.stderr
+        )
+        self.assertEqual(marker.read_text(encoding="utf-8"), "preserve")
+        overwritten = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "quadratic_voting.analyze",
+                "--input-dir",
+                str(export_dir),
+                "--out",
+                str(out_dir),
+                "--overwrite",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(overwritten.returncode, 0, overwritten.stderr)
+        self.assertFalse(marker.exists())
+        failed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "quadratic_voting.analyze",
+                "--input-dir",
+                str(self.root / "missing"),
+                "--out",
+                str(out_dir),
+                "--overwrite",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(failed.returncode, 1)
+        self.assertTrue((out_dir / "timeline.html").exists())
         detail = pq.read_table(out_dir / "snapshot_voter_candidate.parquet").to_pylist()
         self.assertTrue(detail)
         vote_two = next(row for row in detail if row["raw_votes"] == 2)

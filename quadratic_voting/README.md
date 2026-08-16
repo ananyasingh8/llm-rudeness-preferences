@@ -92,7 +92,7 @@ uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 inspect --run-i
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 verify --run-id RUN
 uv run python -m quadratic_voting.experiment.cli --db qv.sqlite3 export --matched-set MATCHED --out exports/MATCHED
 uv run python -m quadratic_voting.experiment.cli plot --export-dir exports/MATCHED --out plots/MATCHED
-uv run python -m quadratic_voting.analyze --export-dir exports/MATCHED --out analytics/MATCHED
+uv run python -m quadratic_voting.analyze --input-dir exports/MATCHED --out analytics/MATCHED
 ```
 
 ## No-GPU snapshot analytics
@@ -113,6 +113,12 @@ quadratic-credit segments with deterministic `C1`… labels),
 indicator for valid ballots), `voter_credit_budget_distribution.png`, and a
 self-contained `timeline.html`. Open `analytics/MATCHED/timeline.html` directly
 in a browser; it makes no network requests or model/provider calls.
+
+Both `--input-dir` and `--out` are required. When `--out` already exists, an
+interactive run asks before replacing it. Non-interactive jobs must explicitly
+pass `--overwrite`. The analyzer builds the complete replacement in a staging
+directory first, so declining the prompt or a generation failure leaves the
+previous analytics artifact unchanged.
 
 The additive rudeness-faceted inventory is
 `snapshot_voter_rudeness_summary` (current per-voter sums within each persisted

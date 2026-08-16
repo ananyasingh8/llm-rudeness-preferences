@@ -9,6 +9,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from quadratic_voting.experiment.aggregate_dashboard import run_aggregate_dashboard
 from quadratic_voting.experiment.snapshots import (
     DEFAULT_SNAPSHOT_COUNT,
     build_snapshot_tables,
@@ -74,23 +75,43 @@ def main(argv: list[str] | None = None) -> int:
         help="replace an existing output without interactive confirmation",
     )
     parser.add_argument("--snapshot-count", type=int, default=DEFAULT_SNAPSHOT_COUNT)
+    parser.add_argument(
+        "--aggregate",
+        action="store_true",
+        help=(
+            "treat --input-dir as an export root containing repeat-<i> "
+            "subdirectories and render the pooled-across-repeats snapshot "
+            "dashboard instead of the single-export snapshot dashboard"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
         _confirm_replacement(args.out, overwrite=args.overwrite)
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        staging = Path(
-            tempfile.mkdtemp(prefix=f".{args.out.name}.staging-", dir=args.out.parent)
-        )
-        table_paths = build_snapshot_tables(
-            args.input_dir, staging, snapshot_count=args.snapshot_count
-        )
-        paths = (
-            *table_paths,
-            *render_snapshot_figures(staging),
-            render_timeline_html(args.input_dir, staging),
-        )
-        _publish(staging, args.out)
-        paths = tuple(args.out / path.name for path in paths)
+        if args.aggregate:
+            if args.out.exists():
+                if args.out.is_dir():
+                    shutil.rmtree(args.out)
+                else:
+                    args.out.unlink()
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            paths = run_aggregate_dashboard(args.input_dir, args.out)
+        else:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            staging = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{args.out.name}.staging-", dir=args.out.parent
+                )
+            )
+            table_paths = build_snapshot_tables(
+                args.input_dir, staging, snapshot_count=args.snapshot_count
+            )
+            paths = (
+                *table_paths,
+                *render_snapshot_figures(staging),
+                render_timeline_html(args.input_dir, staging),
+            )
+            _publish(staging, args.out)
+            paths = tuple(args.out / path.name for path in paths)
     except (OSError, ValueError) as error:
         if "staging" in locals():
             shutil.rmtree(staging, ignore_errors=True)

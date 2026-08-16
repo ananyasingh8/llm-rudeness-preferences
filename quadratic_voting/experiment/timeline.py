@@ -142,10 +142,23 @@ def build_timeline_payload(export_dir: Path, labels: list[Row]) -> dict[str, obj
         analysis[
             (str(row["run_id"]), _int(row["round_index"]), _int(row["voter_index"]))
         ].append(row)
+    survival_rows = _read(export_dir, "candidate_survival")
     survival = {
         (str(row["run_id"]), str(row["candidate_id"])): bool(row["winner"])
-        for row in _read(export_dir, "candidate_survival")
+        for row in survival_rows
     }
+    aggregate_votes: dict[tuple[str, str, int], int] = {}
+    for row in survival_rows:
+        round_indices = row.get("round_indices")
+        votes_by_round = row.get("votes_by_round")
+        if not isinstance(round_indices, list) or not isinstance(votes_by_round, list):
+            raise TypeError(
+                "timeline expected candidate_survival round_indices and votes_by_round lists"
+            )
+        for round_index, votes in zip(round_indices, votes_by_round, strict=True):
+            aggregate_votes[
+                (str(row["run_id"]), str(row["candidate_id"]), _int(round_index))
+            ] = _int(votes)
     runs: list[Row] = []
     for run in sorted(
         _read(export_dir, "runs"), key=lambda value: str(value["run_id"])
@@ -176,6 +189,7 @@ def build_timeline_payload(export_dir: Path, labels: list[Row]) -> dict[str, obj
             outcome = outcomes.get(round_ids[(run_id, index)], {})
             candidates: list[Row] = []
             for candidate in all_candidates:
+                is_active = candidate in active[(run_id, index)]
                 source_turns = sorted(
                     sources[candidate], key=lambda value: _int(value["turn_index"])
                 )
@@ -193,11 +207,16 @@ def build_timeline_payload(export_dir: Path, labels: list[Row]) -> dict[str, obj
                             {"role": row.get("role"), "text": row.get("text")}
                             for row in source_turns
                         ],
+                        "aggregateVotes": aggregate_votes.get(
+                            (run_id, candidate, index)
+                        )
+                        if is_active
+                        else None,
                         "protected": outcome.get("protected_candidate_id") == candidate,
                         "removed": outcome.get("removed_candidate_id") == candidate,
                         "winner": survival.get((run_id, candidate), False)
                         and index == run_rounds[-1],
-                        "active": candidate in active[(run_id, index)],
+                        "active": is_active,
                         "previouslyRemoved": removed_round.get(candidate, index)
                         < index,
                     }

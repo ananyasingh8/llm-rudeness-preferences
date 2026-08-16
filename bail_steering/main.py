@@ -109,8 +109,9 @@ TEMPERATURE = 1.0
 TOP_P = 0.95
 TOP_K = 64
 SEED = 42
-BATCH_SIZE = 16  # conversations generated at once; lower this if CUDA OOMs
-# (E4B is ~5 GB in 4-bit, so unlike the 31B there is ample KV-cache headroom.)
+BATCH_SIZE = 8  # conversations generated at once; lower this if CUDA OOMs
+# (Sized for an 8 GB RTX 3070: ~4.5 GB of 4-bit weights + desktop overhead
+# leaves ~2 GB for the KV cache; E4B's 2-head GQA keeps that cheap.)
 
 REPO_ROOT = Path(__file__).parent.parent
 SAMPLE_FILE = REPO_ROOT / "bail" / "data" / "convabuse_sample.csv"
@@ -503,6 +504,12 @@ def run(
 
     print(f"Loading {route.artifact.repository} ({route.quantization_id.value})...")
     runtime = create_transformers_runtime(route, cache_dir=cache_dir, device=device)
+    if runtime.placement.has_cpu_or_offload:
+        print(
+            "WARNING: parts of the model were placed on CPU/disk "
+            f"(cpu={list(runtime.placement.cpu_modules)}); generation will be "
+            "very slow. Free GPU memory and restart with --resume."
+        )
     model, tokenizer = runtime.model, runtime.tokenizer
     block = _decoder_block(model, steer_layer)
     torch.manual_seed(SEED)

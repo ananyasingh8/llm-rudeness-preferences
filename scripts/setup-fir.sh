@@ -76,14 +76,19 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
-# DRAC exposes the wheelhouse under install/download/wheel find-links, not global.
+# DRAC exposes the wheelhouse under install/download/wheel find-links (not global),
+# and `pip config get` is unreliable for these keys, so parse `pip config list`.
 find_links_output=""
-for key in install.find-links download.find-links wheel.find-links; do
-    if value="$(python -m pip config get "$key" 2>/dev/null)"; then
-        find_links_output="$value"
-        break
-    fi
-done
+while IFS= read -r line; do
+    for key in install.find-links download.find-links wheel.find-links; do
+        if [[ "$line" == "$key="* && -z "$find_links_output" ]]; then
+            value="${line#*=}"
+            value="${value#\'}"
+            value="${value%\'}"
+            find_links_output="$value"
+        fi
+    done
+done < <(python -m pip config list 2>/dev/null)
 if [[ -z "${find_links_output//[[:space:]]/}" ]]; then
     printf 'error: could not read DRAC wheelhouse find-links from pip config (%s)\n' \
         "${PIP_CONFIG_FILE:-unset}" >&2

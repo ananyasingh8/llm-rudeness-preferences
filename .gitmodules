@@ -1,3 +1,6 @@
 [submodule "emotion_probing/EmotionScope"]
 	path = emotion_probing/EmotionScope
 	url = https://github.com/AidanZach/EmotionScope.git
+[submodule "emotion_probing/emotion_experiment"]
+	path = emotion_probing/emotion_experiment
+	url = https://github.com/sinievanderben/emotion_experiment.git

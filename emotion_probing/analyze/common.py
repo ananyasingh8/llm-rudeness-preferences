@@ -24,6 +24,7 @@ DELTA_POSITIVE = "#e34948"  # rude/abusive scores higher
 DELTA_NEGATIVE = "#2a78d6"  # rude/abusive scores lower
 SERIES_1 = "#2a78d6"
 SERIES_2 = "#eb6834"
+SERIES_3 = "#1b9e77"
 NEUTRAL_MID = "#f0efec"  # diverging midpoint
 # Sequential blue ramp (ordinal steps 250..650) for the 5 severity bands.
 SEVERITY_RAMP = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281"]

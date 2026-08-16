@@ -1,0 +1,215 @@
+{
+  "best_by_score": 13,
+  "layers": {
+    "0": {
+      "valence_separation": -0.1428,
+      "synonym_coherence": 0.3267,
+      "score": 0.4695
+    },
+    "1": {
+      "valence_separation": -0.0707,
+      "synonym_coherence": 0.1492,
+      "score": 0.2199
+    },
+    "2": {
+      "valence_separation": -0.0838,
+      "synonym_coherence": 0.1492,
+      "score": 0.233
+    },
+    "3": {
+      "valence_separation": -0.0967,
+      "synonym_coherence": 0.2513,
+      "score": 0.3479
+    },
+    "4": {
+      "valence_separation": -0.1466,
+      "synonym_coherence": 0.3298,
+      "score": 0.4765
+    },
+    "5": {
+      "valence_separation": -0.1417,
+      "synonym_coherence": 0.3113,
+      "score": 0.453
+    },
+    "6": {
+      "valence_separation": -0.1379,
+      "synonym_coherence": 0.3666,
+      "score": 0.5046
+    },
+    "7": {
+      "valence_separation": -0.1316,
+      "synonym_coherence": 0.3868,
+      "score": 0.5184
+    },
+    "8": {
+      "valence_separation": -0.126,
+      "synonym_coherence": 0.3922,
+      "score": 0.5182
+    },
+    "9": {
+      "valence_separation": -0.1271,
+      "synonym_coherence": 0.3633,
+      "score": 0.4904
+    },
+    "10": {
+      "valence_separation": -0.1441,
+      "synonym_coherence": 0.3547,
+      "score": 0.4989
+    },
+    "11": {
+      "valence_separation": -0.1553,
+      "synonym_coherence": 0.398,
+      "score": 0.5533
+    },
+    "12": {
+      "valence_separation": -0.1509,
+      "synonym_coherence": 0.4057,
+      "score": 0.5566
+    },
+    "13": {
+      "valence_separation": -0.1538,
+      "synonym_coherence": 0.422,
+      "score": 0.5759
+    },
+    "14": {
+      "valence_separation": -0.1457,
+      "synonym_coherence": 0.3904,
+      "score": 0.5361
+    },
+    "15": {
+      "valence_separation": -0.1546,
+      "synonym_coherence": 0.3837,
+      "score": 0.5383
+    },
+    "16": {
+      "valence_separation": -0.1755,
+      "synonym_coherence": 0.3645,
+      "score": 0.54
+    },
+    "17": {
+      "valence_separation": -0.1183,
+      "synonym_coherence": 0.2859,
+      "score": 0.4042
+    },
+    "18": {
+      "valence_separation": -0.1032,
+      "synonym_coherence": 0.233,
+      "score": 0.3361
+    },
+    "19": {
+      "valence_separation": -0.0859,
+      "synonym_coherence": 0.1785,
+      "score": 0.2645
+    },
+    "20": {
+      "valence_separation": -0.0729,
+      "synonym_coherence": 0.1598,
+      "score": 0.2328
+    },
+    "21": {
+      "valence_separation": -0.058,
+      "synonym_coherence": 0.1452,
+      "score": 0.2033
+    },
+    "22": {
+      "valence_separation": -0.0835,
+      "synonym_coherence": 0.1644,
+      "score": 0.2479
+    },
+    "23": {
+      "valence_separation": -0.0678,
+      "synonym_coherence": 0.1627,
+      "score": 0.2305
+    },
+    "24": {
+      "valence_separation": -0.1068,
+      "synonym_coherence": 0.2244,
+      "score": 0.3313
+    },
+    "25": {
+      "valence_separation": -0.1108,
+      "synonym_coherence": 0.2504,
+      "score": 0.3612
+    },
+    "26": {
+      "valence_separation": -0.1305,
+      "synonym_coherence": 0.2894,
+      "score": 0.4198
+    },
+    "27": {
+      "valence_separation": -0.1198,
+      "synonym_coherence": 0.2677,
+      "score": 0.3875
+    },
+    "28": {
+      "valence_separation": -0.1035,
+      "synonym_coherence": 0.2451,
+      "score": 0.3486
+    },
+    "29": {
+      "valence_separation": -0.0904,
+      "synonym_coherence": 0.2152,
+      "score": 0.3056
+    },
+    "30": {
+      "valence_separation": -0.1352,
+      "synonym_coherence": 0.2994,
+      "score": 0.4346
+    },
+    "31": {
+      "valence_separation": -0.1072,
+      "synonym_coherence": 0.2802,
+      "score": 0.3874
+    },
+    "32": {
+      "valence_separation": -0.1086,
+      "synonym_coherence": 0.2862,
+      "score": 0.3948
+    },
+    "33": {
+      "valence_separation": -0.1222,
+      "synonym_coherence": 0.3106,
+      "score": 0.4328
+    },
+    "34": {
+      "valence_separation": -0.1088,
+      "synonym_coherence": 0.2738,
+      "score": 0.3826
+    },
+    "35": {
+      "valence_separation": -0.1153,
+      "synonym_coherence": 0.271,
+      "score": 0.3863
+    },
+    "36": {
+      "valence_separation": -0.1175,
+      "synonym_coherence": 0.2633,
+      "score": 0.3808
+    },
+    "37": {
+      "valence_separation": -0.1212,
+      "synonym_coherence": 0.2703,
+      "score": 0.3916
+    },
+    "38": {
+      "valence_separation": -0.116,
+      "synonym_coherence": 0.2593,
+      "score": 0.3752
+    },
+    "39": {
+      "valence_separation": -0.1128,
+      "synonym_coherence": 0.2558,
+      "score": 0.3686
+    },
+    "40": {
+      "valence_separation": -0.0991,
+      "synonym_coherence": 0.2437,
+      "score": 0.3428
+    },
+    "41": {
+      "valence_separation": -0.0739,
+      "synonym_coherence": 0.1481,
+      "score": 0.222
+    }
+  }
+}

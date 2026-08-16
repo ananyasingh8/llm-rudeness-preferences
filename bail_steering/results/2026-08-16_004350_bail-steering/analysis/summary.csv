@@ -1,0 +1,3 @@
+condition,phase,n_total,n_parsed,bail_rate,sem,delta_vs_baseline,rate_bail_first,rate_continue_first
+enraged,prompt,3002,2947,0.2586,0.0081,,0.1766,0.3392
+enraged,tool,1501,1501,0.0147,0.0031,,,

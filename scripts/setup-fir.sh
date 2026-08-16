@@ -69,6 +69,10 @@ fi
 export PATH="$UV_INSTALL_DIR:$PATH"
 export UV_CACHE_DIR
 export UV_NO_MANAGED_PYTHON=1
+# The scratch cache and the /project venv are on different filesystems, so
+# hardlinking is impossible. Copy mode makes the venv self-contained and
+# survives scratch purges; the cost is a one-time copy during install.
+export UV_LINK_MODE=copy
 mkdir -p "$UV_CACHE_DIR"
 
 if ! command -v uv >/dev/null 2>&1; then
@@ -76,8 +80,22 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! find_links_output="$(python -m pip config get global.find-links 2>/dev/null)"; then
-    printf 'error: the loaded Python module did not expose DRAC wheelhouse find-links\n' >&2
+# DRAC exposes the wheelhouse under install/download/wheel find-links (not global),
+# and `pip config get` is unreliable for these keys, so parse `pip config list`.
+find_links_output=""
+while IFS= read -r line; do
+    for key in install.find-links download.find-links wheel.find-links; do
+        if [[ "$line" == "$key="* && -z "$find_links_output" ]]; then
+            value="${line#*=}"
+            value="${value#\'}"
+            value="${value%\'}"
+            find_links_output="$value"
+        fi
+    done
+done < <(python -m pip config list 2>/dev/null)
+if [[ -z "${find_links_output//[[:space:]]/}" ]]; then
+    printf 'error: could not read DRAC wheelhouse find-links from pip config (%s)\n' \
+        "${PIP_CONFIG_FILE:-unset}" >&2
     exit 1
 fi
 find_links_output="${find_links_output//$'\n'/ }"

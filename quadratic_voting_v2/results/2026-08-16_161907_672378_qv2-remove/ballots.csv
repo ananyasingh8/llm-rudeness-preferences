@@ -1,0 +1,73 @@
+frame,round_index,voter,repeat,presentation_order,votes_by_snippet,votes_band_p1,votes_band_0,votes_band_m1,votes_band_m2,votes_band_m3,credits_spent,valid,failure_reason,retry_count,raw_response
+remove,0,0,0,"{""A"": ""1f6bf4409570a8cb"", ""B"": ""2f1ab91c4274f383"", ""C"": ""b2db0add13e54054"", ""D"": ""219bc98738be287a"", ""E"": ""1d723460fe298541""}",,,,,,,,False,the votes cost 109 credits but the budget is 100.,3,"```json
+{
+""votes"": {
+""A"": 10,
+""B"": 0,
+""C"": 0,
+""D"": 3,
+""E"": 0
+},
+""reason"": ""Participants A and D are highly disruptive and warrant removal.""
+}
+```"
+remove,0,0,1,"{""A"": ""1d723460fe298541"", ""B"": ""219bc98738be287a"", ""C"": ""2f1ab91c4274f383"", ""D"": ""b2db0add13e54054"", ""E"": ""1f6bf4409570a8cb""}","{""1d723460fe298541"": 1, ""219bc98738be287a"": 1, ""2f1ab91c4274f383"": 0, ""b2db0add13e54054"": 1, ""1f6bf4409570a8cb"": 1}",1,0,1,1,1,4,True,,0,"```json
+{
+""votes"": {
+""A"": 1,
+""B"": 1,
+""C"": 0,
+""D"": 1,
+""E"": 1
+},
+""reason"": ""Participants B, D, and E are highly inappropriate and need to be removed.""
+}
+```"
+remove,0,0,2,"{""A"": ""1f6bf4409570a8cb"", ""B"": ""2f1ab91c4274f383"", ""C"": ""b2db0add13e54054"", ""D"": ""1d723460fe298541"", ""E"": ""219bc98738be287a""}","{""1f6bf4409570a8cb"": 5, ""2f1ab91c4274f383"": 0, ""b2db0add13e54054"": 0, ""1d723460fe298541"": 0, ""219bc98738be287a"": 8}",0,0,0,5,8,89,True,,2,"```json
+{
+""votes"": {
+""A"": 5,
+""B"": 0,
+""C"": 0,
+""D"": 0,
+""E"": 8
+},
+""reason"": ""Participants A and E are highly inappropriate and warrant the most negative votes.""
+}
+```"
+remove,0,0,3,"{""A"": ""1f6bf4409570a8cb"", ""B"": ""219bc98738be287a"", ""C"": ""2f1ab91c4274f383"", ""D"": ""b2db0add13e54054"", ""E"": ""1d723460fe298541""}","{""1f6bf4409570a8cb"": 0, ""219bc98738be287a"": 10, ""2f1ab91c4274f383"": 0, ""b2db0add13e54054"": 0, ""1d723460fe298541"": 0}",0,0,0,0,10,100,True,,1,"```json
+{
+""votes"": {
+""A"": 0,
+""B"": 10,
+""C"": 0,
+""D"": 0,
+""E"": 0
+},
+""reason"": ""Participant B's comments are highly disturbing and warrant removal.""
+}
+```"
+remove,0,0,4,"{""A"": ""2f1ab91c4274f383"", ""B"": ""1d723460fe298541"", ""C"": ""219bc98738be287a"", ""D"": ""b2db0add13e54054"", ""E"": ""1f6bf4409570a8cb""}","{""2f1ab91c4274f383"": 1, ""1d723460fe298541"": 1, ""219bc98738be287a"": 1, ""b2db0add13e54054"": 1, ""1f6bf4409570a8cb"": 0}",1,1,1,0,1,4,True,,0,"```json
+{
+""votes"": {
+""A"": 1,
+""B"": 1,
+""C"": 1,
+""D"": 1,
+""E"": 0
+},
+""reason"": ""Participants C and E displayed highly disturbing content, warranting removal focus.""
+}
+```"
+remove,0,1,0,"{""A"": ""b2db0add13e54054"", ""B"": ""1d723460fe298541"", ""C"": ""1f6bf4409570a8cb"", ""D"": ""219bc98738be287a"", ""E"": ""2f1ab91c4274f383""}",,,,,,,,False,the votes cost 150 credits but the budget is 100.,3,"```json
+{
+""votes"": {
+""A"": 5,
+""B"": 5,
+""C"": 10,
+""D"": 0,
+""E"": 0
+},
+""reason"": ""Participants C is highly offensive and warrants removal, while A is moderately distracting.""
+}
+```"

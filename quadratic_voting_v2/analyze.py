@@ -307,15 +307,15 @@ def position_bias(ballots: pd.DataFrame) -> pd.DataFrame:
 # --- Figures ------------------------------------------------------------------
 
 
-def label_bars(ax, xs, values, caps, fmt="{:.1f}") -> None:
-    """Value labels centered just above each bar's upper CI cap, so they never
-    sit on a bar, error bar, neighbour, or legend."""
-    caps = np.asarray(caps, dtype=float)
-    pad = 0.03 * max(np.nanmax(caps) if caps.size else 0.0, 1e-9)
-    for x, value, cap in zip(xs, values, caps):
-        if np.isnan(value):
+def label_bars(ax, xs, heights, width, texts) -> None:
+    """Value labels at each bar's top, nudged just left of the error bar so the
+    number hugs its bar and clears the vertical error line."""
+    pad = 0.012 * ax.get_ylim()[1]
+    for x, height, text in zip(xs, heights, texts):
+        if height is None or np.isnan(height):
             continue
-        ax.text(x, cap + pad, fmt.format(value), ha="center", va="bottom", fontsize=8)
+        ax.text(x - 0.16 * width, height + pad, text,
+                ha="right", va="bottom", fontsize=8)
 
 
 def plot_votes_by_band(summary: pd.DataFrame, out_file: Path) -> None:
@@ -341,8 +341,8 @@ def plot_votes_by_band(summary: pd.DataFrame, out_file: Path) -> None:
             label=frame,
             color=frame_color(frame),
         )
-        label_bars(ax, offsets, rows["mean_votes"].to_numpy(),
-                   rows["votes_ci_hi"].to_numpy())
+        heights = rows["mean_votes"].to_numpy()
+        label_bars(ax, offsets, heights, width, [f"{h:.1f}" for h in heights])
     ax.set_xticks(positions)
     ax.set_xticklabels([band_tick(band) for band in BANDS])
     ax.set_xlabel("Level of Abusiveness")
@@ -373,8 +373,8 @@ def plot_votes_by_position(bias: pd.DataFrame, out_file: Path) -> None:
             offsets, rows["mean_votes"], width=width, yerr=errors, capsize=3,
             label=frame, color=frame_color(frame),
         )
-        label_bars(ax, offsets, rows["mean_votes"].to_numpy(),
-                   rows["votes_ci_hi"].to_numpy())
+        heights = rows["mean_votes"].to_numpy()
+        label_bars(ax, offsets, heights, width, [f"{h:.1f}" for h in heights])
     ax.set_xticks(positions)
     ax.set_xticklabels(LETTERS)
     ax.set_xlabel("presentation letter")
@@ -411,10 +411,8 @@ def plot_credit_use_by_voter(metrics: pd.DataFrame, out_file: Path) -> None:
             offsets = x + (i - (len(frames) - 1) / 2) * width
             ax.bar(offsets, vals, width=width, yerr=np.array([lower, upper]),
                    capsize=3, label=frame, color=frame_color(frame))
-            if is_rate:
-                label_bars(ax, offsets, vals * 100, vals + upper, "{:.1f}%")
-            else:
-                label_bars(ax, offsets, vals, vals + upper)
+            texts = [f"{v * 100:.1f}%" if is_rate else f"{v:.1f}" for v in vals]
+            label_bars(ax, offsets, vals, width, texts)
         ax.set_xticks(x)
         ax.set_xticklabels([f"voter {v}" for v in voters])
         ax.set_ylabel(ylabel)

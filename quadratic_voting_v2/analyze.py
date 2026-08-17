@@ -6,7 +6,10 @@ Per run folder this writes an analysis/ subfolder with:
   stats.csv          per-frame Spearman (votes vs severity within ballots),
                      invalid rate, abstention rate
   position_bias.csv  mean votes by presentation letter (A..E)
-  mean_votes_by_band.png, votes_by_position.png
+  voter_metrics.csv  per (frame, voter): mean unspent credits, failure rate,
+                     and abstention rate, each with a cluster-bootstrap 95% CI
+  mean_votes_by_band.png, votes_by_position.png,
+  credit_use_by_voter.png
 
 When runs for both frames are analyzed together, a combined analysis/ folder
 (results/analysis_combined/) repeats the same tables and figures with both
@@ -35,6 +38,7 @@ from quadratic_voting_v2.main import (
     BALLOTS_FILE,
     BAND_VOTE_COLUMNS,
     BANDS,
+    BUDGET,
     LETTERS,
     QV2Error,
     RESULTS_DIR,
@@ -45,24 +49,67 @@ BOOTSTRAP_SEED = 42
 BOOTSTRAP_RESAMPLES = 2000
 COMBINED_DIR = RESULTS_DIR / "analysis_combined"
 
+# Shared figure style, normalized across every QV2 figure -----------------------
+# One palette and one legend title so remove/keep read the same everywhere.
+FRAME_COLORS: dict[str, str] = {"keep": "#185fa5", "remove": "#a32d2d"}
+LEGEND_TITLE = "vote to"
+
+# Human-readable name for each severity band, shown on the x-axis.
+BAND_NAMES: dict[int, str] = {
+    1: "friendly",
+    0: "neutral",
+    -1: "mild abuse",
+    -2: "strong abuse",
+    -3: "severe abuse",
+}
+
+
+def band_tick(band: int) -> str:
+    """Two-line axis tick, e.g. 'mild abuse\\n(-1)'; band 0 shows '(0)'."""
+    signed = "0" if band == 0 else f"{band:+d}"
+    return f"{BAND_NAMES.get(band, '?')}\n({signed})"
+
+
+def frame_color(frame: str) -> str:
+    """Canonical bar color for a frame (falls back to grey if unknown)."""
+    return FRAME_COLORS.get(frame, "#777777")
+
 
 # --- Loading ------------------------------------------------------------------
 
 
+def _ballot_count(ballots_file: Path) -> int:
+    """Number of ballots in a run, tolerant of multiline raw_response cells."""
+    try:
+        return len(pd.read_csv(ballots_file, usecols=["voter"]))
+    except (ValueError, OSError, pd.errors.EmptyDataError):
+        return 0
+
+
 def newest_runs(results_dir: Path = RESULTS_DIR) -> list[Path]:
-    """The newest run folder of each frame (by run_info 'started')."""
-    picks: dict[str, tuple[str, Path]] = {}
+    """The best run folder of each frame for the keep/remove comparison.
+
+    Picks the *most complete* run per frame, not merely the newest: aborted
+    or truncated runs (e.g. a 4-row debug run that only reached voter 0) would
+    otherwise win on timestamp alone and produce a lopsided figure. Ranked by
+    (ballot count, then 'started'), so the fullest — newest among equals — wins.
+    """
+    picks: dict[str, tuple[int, str, Path]] = {}
     if not results_dir.exists():
         return []
     for path in sorted(results_dir.iterdir()):
         info_file = path / "run_info.json"
-        if not path.is_dir() or not info_file.exists():
+        ballots_file = path / BALLOTS_FILE
+        if not path.is_dir() or not info_file.exists() or not ballots_file.exists():
             continue
         info = json.loads(info_file.read_text(encoding="utf-8"))
         frame, started = info.get("frame"), info.get("started", "")
-        if frame in FRAMES and (frame not in picks or started > picks[frame][0]):
-            picks[frame] = (started, path)
-    return [path for _, path in picks.values()]
+        if frame not in FRAMES:
+            continue
+        key = (_ballot_count(ballots_file), started)
+        if frame not in picks or key > picks[frame][:2]:
+            picks[frame] = (*key, path)
+    return [path for *_, path in picks.values()]
 
 
 def load_ballots(run_dir: Path) -> pd.DataFrame:
@@ -164,9 +211,54 @@ def frame_stats(ballots: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def voter_metrics(ballots: pd.DataFrame) -> pd.DataFrame:
+    """Per (frame, voter): mean unspent credits, failure rate, and abstention
+    rate, each with a cluster-bootstrap 95% CI over rounds.
+
+    Each metric is a mean of a per-ballot quantity, so it reuses bootstrap_ci
+    with rounds as clusters (see band_summary for why rounds, not ballots):
+      unspent      = BUDGET - credits_spent, over valid ballots
+      failure_rate = 1 if the ballot was invalid, over all ballots
+      abstention   = 1 if a valid ballot spent no credits, over valid ballots
+    """
+    rng = np.random.default_rng(BOOTSTRAP_SEED)
+    rows = []
+    for frame, group in ballots.groupby("frame"):
+        for voter, vgroup in group.groupby("voter"):
+            valid = vgroup[vgroup["valid"]]
+            metrics = {
+                "unspent": [
+                    (BUDGET - sub[sub["valid"]]["credits_spent"]).to_numpy(dtype=float)
+                    for _, sub in vgroup.groupby("round_index")
+                ],
+                "failure_rate": [
+                    (~sub["valid"]).to_numpy(dtype=float)
+                    for _, sub in vgroup.groupby("round_index")
+                ],
+                "abstention_rate": [
+                    (sub[sub["valid"]]["credits_spent"] == 0).to_numpy(dtype=float)
+                    for _, sub in vgroup.groupby("round_index")
+                ],
+            }
+            record = {
+                "frame": frame,
+                "voter": voter,
+                "n_ballots": len(vgroup),
+                "n_valid": len(valid),
+            }
+            for name, clusters in metrics.items():
+                pooled = np.concatenate(clusters) if clusters else np.array([])
+                lo, hi = bootstrap_ci(clusters, rng)
+                record[name] = pooled.mean() if len(pooled) else float("nan")
+                record[f"{name}_ci_lo"] = lo
+                record[f"{name}_ci_hi"] = hi
+            rows.append(record)
+    return pd.DataFrame(rows)
+
+
 def letter_votes(ballots: pd.DataFrame) -> pd.DataFrame:
-    """Long table of (frame, letter, votes) from the recorded presentation
-    order, valid ballots only — the position-bias check."""
+    """Long table of (frame, round_index, letter, votes) from the recorded
+    presentation order, valid ballots only — the position-bias check."""
     rows = []
     for _, row in ballots[ballots["valid"]].iterrows():
         order = json.loads(row["presentation_order"])
@@ -175,6 +267,7 @@ def letter_votes(ballots: pd.DataFrame) -> pd.DataFrame:
             rows.append(
                 {
                     "frame": row["frame"],
+                    "round_index": row["round_index"],
                     "letter": letter,
                     "votes": votes[order[letter]],
                 }
@@ -183,13 +276,32 @@ def letter_votes(ballots: pd.DataFrame) -> pd.DataFrame:
 
 
 def position_bias(ballots: pd.DataFrame) -> pd.DataFrame:
+    """Mean votes per (frame, presentation letter), with a cluster-bootstrap
+    95% CI over rounds (same rationale as band_summary)."""
+    columns = ["frame", "letter", "mean_votes", "votes_ci_lo", "votes_ci_hi", "n"]
     long = letter_votes(ballots)
     if long.empty:
-        return pd.DataFrame(columns=["frame", "letter", "mean_votes", "n"])
-    grouped = long.groupby(["frame", "letter"])["votes"]
-    out = grouped.mean().rename("mean_votes").reset_index()
-    out["n"] = grouped.count().to_numpy()
-    return out
+        return pd.DataFrame(columns=columns)
+    rng = np.random.default_rng(BOOTSTRAP_SEED)
+    rows = []
+    for (frame, letter), group in long.groupby(["frame", "letter"]):
+        votes = group["votes"].to_numpy(dtype=float)
+        by_round = [
+            sub["votes"].to_numpy(dtype=float)
+            for _, sub in group.groupby("round_index")
+        ]
+        lo, hi = bootstrap_ci(by_round, rng)
+        rows.append(
+            {
+                "frame": frame,
+                "letter": letter,
+                "mean_votes": votes.mean() if len(votes) else float("nan"),
+                "votes_ci_lo": lo,
+                "votes_ci_hi": hi,
+                "n": len(votes),
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
 
 
 # --- Figures ------------------------------------------------------------------
@@ -216,13 +328,14 @@ def plot_votes_by_band(summary: pd.DataFrame, out_file: Path) -> None:
             yerr=errors,
             capsize=3,
             label=frame,
+            color=frame_color(frame),
         )
     ax.set_xticks(positions)
-    ax.set_xticklabels([f"{band:+d}" for band in BANDS])
-    ax.set_xlabel("severity band (+1 friendly ... -3 most abusive)")
+    ax.set_xticklabels([band_tick(band) for band in BANDS])
+    ax.set_xlabel("Level of Abusiveness")
     ax.set_ylabel("mean votes (95% bootstrap CI)")
-    ax.set_title("Mean votes per severity band")
-    ax.legend(title="frame")
+    ax.set_title("Mean votes by level of abusiveness")
+    ax.legend(title=LEGEND_TITLE)
     fig.tight_layout()
     fig.savefig(out_file, dpi=150)
     plt.close(fig)
@@ -236,14 +349,67 @@ def plot_votes_by_position(bias: pd.DataFrame, out_file: Path) -> None:
     for i, frame in enumerate(frames):
         rows = bias[bias["frame"] == frame].set_index("letter").reindex(LETTERS)
         offsets = positions + (i - (len(frames) - 1) / 2) * width
-        ax.bar(offsets, rows["mean_votes"], width=width, label=frame)
+        errors = np.array(
+            [
+                rows["mean_votes"] - rows["votes_ci_lo"],
+                rows["votes_ci_hi"] - rows["mean_votes"],
+            ]
+        )
+        ax.bar(
+            offsets, rows["mean_votes"], width=width, yerr=errors, capsize=3,
+            label=frame, color=frame_color(frame),
+        )
     ax.set_xticks(positions)
     ax.set_xticklabels(LETTERS)
     ax.set_xlabel("presentation letter")
-    ax.set_ylabel("mean votes")
-    ax.set_title("Position-bias check: mean votes by presentation letter")
-    ax.legend(title="frame")
+    ax.set_ylabel("mean votes (95% bootstrap CI)")
+    ax.set_title("Mean votes by presentation letter (position-bias check)")
+    ax.legend(title=LEGEND_TITLE)
     fig.tight_layout()
+    fig.savefig(out_file, dpi=150)
+    plt.close(fig)
+
+
+def plot_credit_use_by_voter(metrics: pd.DataFrame, out_file: Path) -> None:
+    """Three panels (mean unspent credits, failure rate, abstention rate),
+    grouped bars per voter with keep vs remove and cluster-bootstrap CIs.
+    Labels sit above each CI cap; one shared legend clears every panel.
+    """
+    frames = sorted(metrics["frame"].unique())
+    voters = sorted(metrics["voter"].unique())
+    x = np.arange(len(voters))
+    width = 0.8 / max(len(frames), 1)
+    panels = [
+        ("unspent", "Mean unspent credits", f"Mean unspent credits (budget = {BUDGET})", False),
+        ("failure_rate", "Invalid-ballot rate", "Mean failure rate (invalid ballots)", True),
+        ("abstention_rate", "Abstention rate", "Mean abstention rate (valid, 0 credits)", True),
+    ]
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.6))
+    for ax, (col, ylabel, title, is_rate) in zip(axes, panels):
+        for i, frame in enumerate(frames):
+            rows = metrics[metrics["frame"] == frame].set_index("voter").reindex(voters)
+            vals = rows[col].to_numpy(dtype=float)
+            lower = np.clip(vals - rows[f"{col}_ci_lo"].to_numpy(dtype=float), 0, None)
+            upper = np.clip(rows[f"{col}_ci_hi"].to_numpy(dtype=float) - vals, 0, None)
+            offsets = x + (i - (len(frames) - 1) / 2) * width
+            ax.bar(offsets, vals, width=width, yerr=np.array([lower, upper]),
+                   capsize=3, label=frame, color=frame_color(frame))
+            caps = vals + upper
+            pad = 0.03 * max(np.nanmax(caps), 1e-9)
+            for xo, val, cap in zip(offsets, vals, caps):
+                text = f"{val:.1f}" if not is_rate else f"{val * 100:.1f}%"
+                ax.text(xo, cap + pad, text, ha="center", va="bottom", fontsize=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"voter {v}" for v in voters])
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.set_ylim(bottom=0, top=ax.get_ylim()[1] * 1.32)  # headroom for labels + upper-left legend
+        if is_rate:
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y * 100:.0f}%"))
+        ax.legend(title=LEGEND_TITLE, loc="upper left")
+    fig.suptitle("Unspent credits, failures, and abstentions by voter "
+                 "(keep vs remove)", fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_file, dpi=150)
     plt.close(fig)
 
@@ -256,13 +422,17 @@ def analyze_ballots(ballots: pd.DataFrame, out_dir: Path) -> None:
     summary = band_summary(ballots)
     stats = frame_stats(ballots)
     bias = position_bias(ballots)
+    voters = voter_metrics(ballots)
     summary.to_csv(out_dir / "summary.csv", index=False)
     stats.to_csv(out_dir / "stats.csv", index=False)
     bias.to_csv(out_dir / "position_bias.csv", index=False)
+    voters.to_csv(out_dir / "voter_metrics.csv", index=False)
     if not summary.empty:
         plot_votes_by_band(summary, out_dir / "mean_votes_by_band.png")
     if not bias.empty:
         plot_votes_by_position(bias, out_dir / "votes_by_position.png")
+    if not voters.empty:
+        plot_credit_use_by_voter(voters, out_dir / "credit_use_by_voter.png")
     print(f"Wrote {out_dir}")
 
 

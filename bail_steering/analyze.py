@@ -2,12 +2,16 @@
 
 By default POOLS every repeat-protocol run folder (one folder per
 condition x seed, marked by a `seed` in run_info.json) and writes
-summary.csv plus charts into results/analysis-pooled/. Legacy folders
-without a seed are excluded (the pre-protocol enraged run reused seed 42
-and would partially double-count it). `--run PATH` analyzes exactly one
-folder into <run>/analysis/ as before. Needs only stdlib + matplotlib:
+summary.csv plus charts into a NEW timestamped folder under
+results/analysis-pooled/ — earlier pooled analyses are never overwritten.
+Legacy folders without a seed are excluded (the pre-protocol enraged run
+reused seed 42 and would partially double-count it). `--sample PATH`
+pools runs of a different frozen sample (e.g. the pre-verified one);
+`--run PATH` analyzes exactly one folder into <run>/analysis/ as before.
+Needs only stdlib + matplotlib:
 
-  python -m bail_steering.analyze            # pool all seeded runs
+  python -m bail_steering.analyze            # pool current-sample runs
+  python -m bail_steering.analyze --sample bail/data/convabuse_sample.csv
   python -m bail_steering.analyze --run PATH # one folder
 """
 
@@ -18,6 +22,7 @@ import csv
 import json
 import math
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 from bail.prompts.bail_methods import GREEN, SHUFFLE, remove_thinking
@@ -109,12 +114,14 @@ def load_rows(run_dir: Path) -> list[dict[str, str]]:
     return rows
 
 
-def load_pooled() -> tuple[list[dict[str, str]], Path, dict[str, int]]:
+def load_pooled(
+    sample_file: str,
+) -> tuple[list[dict[str, str]], Path, dict[str, int]]:
     """Pool all repeat-protocol runs: (rows, newest folder, n_runs per label).
 
     A repeat-protocol folder has responses.csv, a `seed` in run_info.json,
     and the seed in its folder name (one folder per condition x seed). Only
-    runs of the CURRENT frozen sample are pooled — runs of an older sample
+    runs of the GIVEN frozen sample are pooled — runs of a different sample
     measured different conversations and must never mix. When the same
     (condition, seed, coefficient) triple appears in several folders —
     aborted jobs leave partial retries — only the folder with the most rows
@@ -141,7 +148,7 @@ def load_pooled() -> tuple[list[dict[str, str]], Path, dict[str, int]]:
         info = json.loads(info_file.read_text(encoding="utf-8"))
         if info.get("seed") is None:
             continue
-        if info.get("sample_file") != SAMPLE_FILE_REL:
+        if info.get("sample_file") != sample_file:
             other_sample += 1
             continue
         with responses.open(encoding="utf-8-sig", newline="") as handle:
@@ -164,14 +171,14 @@ def load_pooled() -> tuple[list[dict[str, str]], Path, dict[str, int]]:
             )
     if other_sample:
         print(
-            f"  note: excluded {other_sample} run folder(s) from an older "
-            f"sample (pooling only {SAMPLE_FILE_REL})"
+            f"  note: excluded {other_sample} run folder(s) from a different "
+            f"sample (pooling only {sample_file})"
         )
     if not candidates:
         raise SystemExit(
-            "error: no seeded run folders found for the current sample "
-            f"({SAMPLE_FILE_REL}). Run `uv run python -m bail_steering.main "
-            "run` first, or pass --run."
+            f"error: no seeded run folders found for sample {sample_file}. "
+            "Run `uv run python -m bail_steering.main run` first, or pass "
+            "--run / a different --sample."
         )
     kept: dict[tuple, tuple] = {}
     for entry in candidates:
@@ -423,6 +430,10 @@ def main() -> None:
         "--run", default=None,
         help="analyze one run folder (default: pool all seeded runs)",
     )
+    parser.add_argument(
+        "--sample", default=SAMPLE_FILE_REL,
+        help="pool only runs of this frozen sample file (run_info sample_file)",
+    )
     args = parser.parse_args()
     if args.run is not None:
         run_dir = find_run_dir(args.run)
@@ -431,8 +442,12 @@ def main() -> None:
         out_dir = run_dir / "analysis"
         print(f"Analyzing {run_dir} ({len(rows)} generations)")
     else:
-        rows, run_dir, n_runs = load_pooled()
-        out_dir = RESULTS_DIR / "analysis-pooled"
+        rows, run_dir, n_runs = load_pooled(args.sample)
+        # A fresh timestamped folder per invocation: pooled analyses are
+        # snapshots of whatever runs existed at the time, so overwriting
+        # would silently destroy earlier ones.
+        stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        out_dir = RESULTS_DIR / "analysis-pooled" / f"{stamp}_{Path(args.sample).stem}"
         print(
             f"Pooled {len(rows)} generations across "
             f"{sum(n_runs.values())} run folders"

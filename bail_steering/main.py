@@ -99,29 +99,30 @@ COEFFICIENT = 0.1  # fraction of residual-stream norm (Anthropic's units)
 #    from its analysis. Risers get +COEFFICIENT, fallers get -COEFFICIENT.
 STEER_LAYER: int | None = 13
 STEER_VECTORS_RUN: str | None = "2026-08-16_000402_extract-gemma4-e4b-it"
-# Top-10 movers by shift_band_avg in results/2026-08-16_002652_convabuse-e4b.
+# Top-10 movers by shift_band_avg in results/2026-08-17_015634_convabuse-e4b
+# (verified sample: annotator agreement severity_std <= 0.5).
 STEER_RISERS: tuple[str, ...] | None = (
     "enraged",
     "spiteful",
-    "vindictive",
-    "outraged",
     "angry",
+    "irate",
     "insulted",
-    "hostile",
     "defiant",
-    "sullen",
-    "hateful",
+    "indignant",
+    "outraged",
+    "mortified",
+    "vindictive",
 )
 STEER_FALLERS: tuple[str, ...] | None = (
-    "content",
+    "excited",
+    "enthusiastic",
     "refreshed",
-    "elated",
+    "amazed",
     "serene",
-    "at ease",
-    "hope",
+    "sentimental",
+    "content",
     "peaceful",
-    "dependent",
-    "happy",
+    "elated",
     "nostalgic",
 )
 

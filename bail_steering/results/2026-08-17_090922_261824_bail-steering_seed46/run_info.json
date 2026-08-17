@@ -1,0 +1,65 @@
+{
+  "experiment": "bail-steering",
+  "started": "2026-08-17T09:09:22.261471+00:00",
+  "model_id": "gemma-4-e4b-it",
+  "quantization_id": "bitsandbytes-fp4",
+  "repository": "google/gemma-4-E4B-it",
+  "revision": "ee0ef6023621cff504d758262d4e04895a5af4a2",
+  "steer_layer": null,
+  "steer_layers": [
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "steer_scope": "all",
+  "coefficient": 0.01,
+  "coefficient_units": "fraction of residual stream norm (unit direction)",
+  "risers": [
+    "enraged",
+    "spiteful",
+    "angry",
+    "irate",
+    "insulted",
+    "defiant",
+    "indignant",
+    "outraged",
+    "mortified",
+    "vindictive"
+  ],
+  "fallers": [
+    "excited",
+    "enthusiastic",
+    "refreshed",
+    "amazed",
+    "serene",
+    "sentimental",
+    "content",
+    "peaceful",
+    "elated",
+    "nostalgic"
+  ],
+  "vectors_run": "2026-08-16_000402_extract-gemma4-e4b-it",
+  "vectors_files": [
+    "emotion_probing/results/2026-08-16_000402_extract-gemma4-e4b-it/gemma4-e4b-it_emotion_vectors_layer11.npz",
+    "emotion_probing/results/2026-08-16_000402_extract-gemma4-e4b-it/gemma4-e4b-it_emotion_vectors_layer12.npz",
+    "emotion_probing/results/2026-08-16_000402_extract-gemma4-e4b-it/gemma4-e4b-it_emotion_vectors_layer13.npz",
+    "emotion_probing/results/2026-08-16_000402_extract-gemma4-e4b-it/gemma4-e4b-it_emotion_vectors_layer14.npz",
+    "emotion_probing/results/2026-08-16_000402_extract-gemma4-e4b-it/gemma4-e4b-it_emotion_vectors_layer15.npz"
+  ],
+  "sample_file": "bail/data/convabuse_sample_verified.csv",
+  "sample_rows": 1023,
+  "methods": [
+    "bail_first",
+    "continue_first",
+    "tool"
+  ],
+  "prompt_max_tokens": 1000,
+  "tool_max_tokens": 1000,
+  "temperature": 1.0,
+  "top_p": 0.95,
+  "top_k": 64,
+  "seed": 46,
+  "batch_size": 128
+}

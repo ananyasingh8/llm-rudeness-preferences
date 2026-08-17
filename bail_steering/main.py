@@ -221,17 +221,28 @@ class SteeringHook:
     def __init__(
         self, direction: torch.Tensor, coefficient: float, scope: str
     ) -> None:
-        self.direction = direction  # unit-normalized, float32
+        self.direction = direction  # unit-normalized, float32, CPU
         self.coefficient = coefficient  # signed: +0.1 risers, -0.1 fallers
         self.scope = scope  # "response" or "all"
+        self._device_direction: torch.Tensor | None = None
 
     def __call__(self, module, args, output):
         hidden = output[0] if isinstance(output, tuple) else output
         if self.scope == "response" and hidden.shape[1] != 1:
             return output  # prompt prefill: only steer generated tokens
-        direction = self.direction.to(hidden.device)
-        norms = hidden.float().norm(dim=-1, keepdim=True)
-        steered = hidden + (self.coefficient * norms * direction).to(hidden.dtype)
+        direction = self._device_direction
+        if direction is None or direction.device != hidden.device:
+            # Moved to the model's device/dtype once, not per forward call.
+            direction = self.direction.to(device=hidden.device, dtype=hidden.dtype)
+            self._device_direction = direction
+        # Norms accumulate in float32 via a fused reduction; the push is
+        # assembled in the model dtype. Prefill steering (batch x seq x
+        # width) therefore never materializes a float32 copy of the hidden
+        # state -- at batch 128 that copy would be ~2 GB per steered layer.
+        norms = torch.linalg.vector_norm(
+            hidden, dim=-1, keepdim=True, dtype=torch.float32
+        )
+        steered = hidden + (self.coefficient * norms).to(hidden.dtype) * direction
         if isinstance(output, tuple):
             return (steered,) + output[1:]
         return steered

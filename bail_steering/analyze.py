@@ -139,10 +139,10 @@ def load_pooled(
     folders — aborted jobs leave partial retries — only the folder with the
     most rows is kept: a retry replays the same RNG stream, so the smaller
     one is a duplicate prefix, not independent data. Folders that share
-    (condition, seed, coefficient) but differ in token caps or steering
-    layer are deliberate variants, not retries: ALL are kept, each labeled
-    with its folder's timestamp ("defiant@0.02#032702") so they stay
-    separate. If several
+    (condition, seed, coefficient) but differ in token caps, steered
+    layer(s), or steering scope are deliberate variants, not retries: ALL
+    are kept, each labeled with its folder's timestamp
+    ("defiant@0.02#032702") so they stay separate. If several
     steering magnitudes are present (dose-response runs), steered
     conditions are labeled "<emotion>@<coefficient>"; baseline is never
     steered and pools across doses.
@@ -181,8 +181,22 @@ def load_pooled(
                 if condition == BASELINE_CONDITION
                 else info.get("coefficient")
             )
-            caps = (info.get("prompt_max_tokens"), info.get("tool_max_tokens"),
-                    info.get("steer_layer"))
+            layers = info.get("steer_layers") or (
+                [info["steer_layer"]] if info.get("steer_layer") is not None
+                else []
+            )
+            # Baseline is unsteered: caps/layers/scope don't change its
+            # generations, and a same-seed baseline rerun replays the same
+            # RNG stream. Identity () pools baselines across protocol
+            # changes (retry dedup still keeps one folder per seed).
+            caps = (
+                ()
+                if condition == BASELINE_CONDITION
+                else (info.get("prompt_max_tokens"),
+                      info.get("tool_max_tokens"),
+                      ",".join(str(layer) for layer in layers),
+                      info.get("steer_scope") or "response")
+            )
             candidates.append(
                 (condition, info["seed"], coeff, count, folder,
                  [r for r in rows if r["condition"] == condition],
@@ -221,7 +235,7 @@ def load_pooled(
     n_runs: dict[str, int] = {}
     newest = max(kept.values(), key=lambda e: e[6])[4]
     print(f"{'folder':<48} {'condition':<22} {'seed':>10} {'steer':>6} "
-          f"{'layer':>5} {'cap':>5} {'rows':>6}")
+          f"{'layers':>12} {'scope':>8} {'cap':>5} {'rows':>6}")
     for (condition, seed, coeff), entries in sorted(
         cells.items(), key=lambda item: (item[0][0], str(item[0][2]), item[0][1])
     ):
@@ -238,10 +252,11 @@ def load_pooled(
             _, _, _, count, folder, rows, _, caps = entry
             label = f"{base_label}#{tag}" if len(entries) > 1 else base_label
             steer_text = "-" if coeff is None else f"{coeff:g}"
-            cap_text = "-" if caps[0] is None else str(caps[0])
-            layer_text = "-" if caps[2] is None else str(caps[2])
+            cap_text = str(caps[0]) if caps and caps[0] is not None else "-"
+            layer_text = (caps[2] if caps else "") or "-"
+            scope_text = caps[3] if caps else "-"
             print(f"{folder.name:<48} {label:<22} {seed:>10} {steer_text:>6} "
-                  f"{layer_text:>5} {cap_text:>5} {count:>6}")
+                  f"{layer_text:>12} {scope_text:>8} {cap_text:>5} {count:>6}")
             for row in rows:
                 row["condition"] = label
             pooled.extend(rows)

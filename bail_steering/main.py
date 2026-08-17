@@ -99,32 +99,45 @@ COEFFICIENT = 0.1  # fraction of residual-stream norm (Anthropic's units)
 #    from its analysis. Risers get +COEFFICIENT, fallers get -COEFFICIENT.
 STEER_LAYER: int | None = 13
 STEER_VECTORS_RUN: str | None = "2026-08-16_000402_extract-gemma4-e4b-it"
-# Top-10 movers by shift_band_avg in results/2026-08-17_015634_convabuse-e4b
-# (verified sample: annotator agreement severity_std <= 0.5).
-STEER_RISERS: tuple[str, ...] | None = (
-    "enraged",
-    "spiteful",
-    "angry",
-    "irate",
-    "insulted",
-    "defiant",
-    "indignant",
-    "outraged",
-    "mortified",
-    "vindictive",
-)
-STEER_FALLERS: tuple[str, ...] | None = (
-    "excited",
-    "enthusiastic",
-    "refreshed",
-    "amazed",
-    "serene",
-    "sentimental",
-    "content",
-    "peaceful",
-    "elated",
-    "nostalgic",
-)
+# Set by --layer: the decoder blocks steered this invocation (default: the
+# pinned STEER_LAYER alone). Multi-layer bands steer each block with that
+# block's OWN vector -- the emotion code drifts across layers, so a band
+# must stay inside one coherent region (11-16 early, 30-33 late).
+STEER_LAYERS: tuple[int, ...] | None = None
+# Top-10 risers/fallers by shift_band_avg per PROBED layer (verified sample:
+# annotator agreement severity_std <= 0.5). The steered layer set must
+# contain exactly one layer pinned here; its lists define the conditions
+# and steering signs. Layer 13: results/2026-08-17_015634_convabuse-e4b.
+# Layer 30: pin after probing it (`uv run python -m emotion_probing.main
+# run --layer 30` + analyze).
+STEER_PINS: dict[int, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    13: (
+        (
+            "enraged",
+            "spiteful",
+            "angry",
+            "irate",
+            "insulted",
+            "defiant",
+            "indignant",
+            "outraged",
+            "mortified",
+            "vindictive",
+        ),
+        (
+            "excited",
+            "enthusiastic",
+            "refreshed",
+            "amazed",
+            "serene",
+            "sentimental",
+            "content",
+            "peaceful",
+            "elated",
+            "nostalgic",
+        ),
+    ),
+}
 
 BASELINE_CONDITION = "baseline"
 VECTORS_PREFIX = "gemma4-e4b-it"  # npz prefix written by the extraction
@@ -190,24 +203,31 @@ class SteeringError(RuntimeError):
 
 
 class SteeringHook:
-    """Forward hook adding a fixed-fraction emotion push to generated tokens.
+    """Forward hook adding a fixed-fraction emotion push at token positions.
 
-    Registered on the steered decoder block. Prefill passes (sequence length
+    Registered on a steered decoder block. Each steered position's hidden
+    state gets `coefficient x (its residual norm)` added in the emotion's
+    unit direction -- Anthropic's "fraction of residual stream norm" units.
+
+    scope "response" (the original design): prefill passes (sequence length
     > 1, i.e. the conversation being read) are left untouched; with KV-cache
-    generation every later pass computes exactly one generated token, and
-    that token's hidden state gets `coefficient x (its residual norm)` added
-    in the emotion's unit direction -- Anthropic's "fraction of residual
-    stream norm" units. (The first response token is decided during prefill
-    and is therefore unsteered; the remaining hundreds are steered.)
+    generation every later pass computes exactly one generated token, which
+    is steered. (The first response token is decided during prefill and is
+    therefore unsteered.) scope "all": every position of every pass is
+    steered, prefill included -- the model reads the conversation already in
+    the induced state, matching Anthropic's all-positions interventions.
     """
 
-    def __init__(self, direction: torch.Tensor, coefficient: float) -> None:
+    def __init__(
+        self, direction: torch.Tensor, coefficient: float, scope: str
+    ) -> None:
         self.direction = direction  # unit-normalized, float32
         self.coefficient = coefficient  # signed: +0.1 risers, -0.1 fallers
+        self.scope = scope  # "response" or "all"
 
     def __call__(self, module, args, output):
         hidden = output[0] if isinstance(output, tuple) else output
-        if hidden.shape[1] != 1:
+        if self.scope == "response" and hidden.shape[1] != 1:
             return output  # prompt prefill: only steer generated tokens
         direction = self.direction.to(hidden.device)
         norms = hidden.float().norm(dim=-1, keepdim=True)
@@ -217,8 +237,8 @@ class SteeringHook:
         return steered
 
 
-def require_pins() -> tuple[int, str, tuple[str, ...], tuple[str, ...]]:
-    """The pinned (layer, extraction run, risers, fallers), or instructions."""
+def require_pins() -> tuple[tuple[int, ...], str, tuple[str, ...], tuple[str, ...]]:
+    """The pinned (layers, extraction run, risers, fallers), or instructions."""
     if STEER_LAYER is None or STEER_VECTORS_RUN is None:
         raise SteeringError(
             "STEER_LAYER and STEER_VECTORS_RUN are not pinned yet. Run the "
@@ -227,15 +247,18 @@ def require_pins() -> tuple[int, str, tuple[str, ...], tuple[str, ...]]:
             "plateau over a lone spike), then set both constants at the top "
             "of bail_steering/main.py."
         )
-    if STEER_RISERS is None or STEER_FALLERS is None:
+    layers = STEER_LAYERS if STEER_LAYERS is not None else (STEER_LAYER,)
+    pinned = [layer for layer in layers if layer in STEER_PINS]
+    if len(pinned) != 1:
         raise SteeringError(
-            "STEER_RISERS and STEER_FALLERS are not pinned yet. Run the "
-            "probing experiment (`uv run python -m emotion_probing.main "
-            "--experiment convabuse-e4b run`) and its analysis, then set the "
-            "top-10 risers and fallers (by shift vs band 0) at the top of "
-            "bail_steering/main.py."
+            f"The steered layer set {list(layers)} must contain exactly one "
+            f"layer with pinned riser/faller lists (pinned: "
+            f"{sorted(STEER_PINS)}); found {pinned}. Probe the new layer "
+            "(`uv run python -m emotion_probing.main run --layer N`), then "
+            "add its top-10 movers to STEER_PINS in bail_steering/main.py."
         )
-    return STEER_LAYER, STEER_VECTORS_RUN, STEER_RISERS, STEER_FALLERS
+    risers, fallers = STEER_PINS[pinned[0]]
+    return tuple(layers), STEER_VECTORS_RUN, risers, fallers
 
 
 def conditions() -> tuple[str, ...]:
@@ -244,8 +267,8 @@ def conditions() -> tuple[str, ...]:
     return (BASELINE_CONDITION,) + risers + fallers
 
 
-def vectors_path() -> Path:
-    layer, run, _, _ = require_pins()
+def vectors_path(layer: int) -> Path:
+    _, run, _, _ = require_pins()
     return (
         EXTRACTION_RESULTS_DIR
         / run
@@ -255,38 +278,43 @@ def vectors_path() -> Path:
 
 def validate_vector_pins(route) -> None:
     """The pinned extraction run must match the steering model exactly."""
-    layer, _, _, _ = require_pins()
-    path = vectors_path()
-    if not path.exists():
-        raise SteeringError(
-            f"Emotion vectors file not found: {path}. Check STEER_VECTORS_RUN "
-            "and STEER_LAYER against the extraction run's actual outputs."
-        )
-    run_info_file = path.parent / "run_info.json"
-    if run_info_file.exists():
-        info = json.loads(run_info_file.read_text(encoding="utf-8"))
-        if info.get("repository") != route.artifact.repository:
+    layers, _, _, _ = require_pins()
+    for layer in layers:
+        path = vectors_path(layer)
+        if not path.exists():
             raise SteeringError(
-                f"The pinned vectors were extracted from "
-                f"{info.get('repository')} but the steering route loads "
-                f"{route.artifact.repository}. Emotion vectors are "
-                "model-specific; fix the pinning."
+                f"Emotion vectors file not found: {path}. Check "
+                "STEER_VECTORS_RUN and the steered layers against the "
+                "extraction run's actual outputs."
             )
-        if layer not in info.get("probe_layers", []):
-            raise SteeringError(
-                f"STEER_LAYER={layer} was not part of the pinned extraction "
-                "run's probe_layers; fix the pinning."
-            )
+        run_info_file = path.parent / "run_info.json"
+        if run_info_file.exists():
+            info = json.loads(run_info_file.read_text(encoding="utf-8"))
+            if info.get("repository") != route.artifact.repository:
+                raise SteeringError(
+                    f"The pinned vectors were extracted from "
+                    f"{info.get('repository')} but the steering route loads "
+                    f"{route.artifact.repository}. Emotion vectors are "
+                    "model-specific; fix the pinning."
+                )
+            if layer not in info.get("probe_layers", []):
+                raise SteeringError(
+                    f"Steered layer {layer} was not part of the pinned "
+                    "extraction run's probe_layers; fix the pinning."
+                )
 
 
-def load_direction(condition: str, magnitude: float) -> tuple[torch.Tensor, float]:
-    """The unit steering direction and signed coefficient for a condition.
+def load_direction(
+    condition: str, magnitude: float, layer: int
+) -> tuple[torch.Tensor, float]:
+    """The unit steering direction (at `layer`) and the signed coefficient.
 
     The sign comes from the pinned lists (risers +, fallers -); the
-    magnitude comes from --steer (default COEFFICIENT).
+    magnitude comes from --steer (default COEFFICIENT). Each layer uses its
+    own extracted vector: the emotion code drifts with depth.
     """
     _, _, risers, _ = require_pins()
-    path = vectors_path()
+    path = vectors_path(layer)
     data = np.load(path)
     if condition not in data.files:
         raise SteeringError(
@@ -555,10 +583,11 @@ def run(
     batch_size: int,
     prompt_max_tokens: int,
     tool_max_tokens: int,
+    steer_scope: str,
 ) -> None:
     route = resolve_steering_route()
     validate_vector_pins(route)
-    steer_layer, steer_run, risers, fallers = require_pins()
+    steer_layers, steer_run, risers, fallers = require_pins()
     all_conditions = conditions()
     run_conditions = list(selected) if selected else list(all_conditions)
     unknown = [name for name in run_conditions if name not in all_conditions]
@@ -577,13 +606,20 @@ def run(
         "quantization_id": route.quantization_id.value,
         "repository": route.artifact.repository,
         "revision": route.artifact.revision,
-        "steer_layer": steer_layer,
+        # steer_layer stays for single-layer runs (old analyses read it);
+        # steer_layers is the full set actually hooked.
+        "steer_layer": steer_layers[0] if len(steer_layers) == 1 else None,
+        "steer_layers": list(steer_layers),
+        "steer_scope": steer_scope,
         "coefficient": coefficient,
         "coefficient_units": "fraction of residual stream norm (unit direction)",
         "risers": list(risers),
         "fallers": list(fallers),
         "vectors_run": steer_run,
-        "vectors_file": str(vectors_path().relative_to(REPO_ROOT)),
+        "vectors_files": [
+            str(vectors_path(layer).relative_to(REPO_ROOT))
+            for layer in steer_layers
+        ],
         "sample_file": str(SAMPLE_FILE.relative_to(REPO_ROOT)),
         "sample_rows": len(rows),
         "methods": list(methods),
@@ -610,7 +646,7 @@ def run(
             "very slow. Free GPU memory and restart with --resume."
         )
     model, tokenizer = runtime.model, runtime.tokenizer
-    block = _decoder_block(model, steer_layer)
+    blocks = [_decoder_block(model, layer) for layer in steer_layers]
     torch.manual_seed(seed)
 
     all_tasks = build_tasks(rows, methods)
@@ -628,12 +664,15 @@ def run(
         # Similar-length prompts batched together -> less padding waste.
         tasks.sort(key=lambda task: len(task["text"]))
 
-        hook_handle = None
+        hook_handles = []
         if condition != BASELINE_CONDITION:
-            direction, signed = load_direction(condition, coefficient)
-            hook_handle = block.register_forward_hook(
-                SteeringHook(direction, signed)
-            )
+            for layer, block in zip(steer_layers, blocks):
+                direction, signed = load_direction(condition, coefficient, layer)
+                hook_handles.append(
+                    block.register_forward_hook(
+                        SteeringHook(direction, signed, steer_scope)
+                    )
+                )
         print(f"[{condition}] {len(tasks)} generations")
         started = time.perf_counter()
         finished = 0
@@ -683,8 +722,8 @@ def run(
                     f"({rate * 60:.1f}/min, ~{remaining / 3600:.1f} h left)"
                 )
         finally:
-            if hook_handle is not None:
-                hook_handle.remove()
+            for handle in hook_handles:
+                handle.remove()
     print(f"Done. Results in {run_dir}")
 
 
@@ -727,6 +766,18 @@ def _seeds_arg(value: str) -> tuple[int, ...]:
         raise argparse.ArgumentTypeError(
             "--seed takes an integer or a comma-separated list, e.g. 42,43,44"
         ) from error
+
+
+def _layers_arg(value: str) -> tuple[int, ...]:
+    try:
+        layers = tuple(int(part) for part in value.split(","))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "--layer must be an integer or comma-separated integers"
+        ) from error
+    if len(layers) != len(set(layers)):
+        raise argparse.ArgumentTypeError("--layer has duplicate layers")
+    return layers
 
 
 def _steer_arg(value: str) -> float:
@@ -815,13 +866,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--layer",
-        type=int,
+        type=_layers_arg,
         default=None,
         help=(
-            "steer at this decoder block instead of the pinned STEER_LAYER; "
-            "the pinned extraction run must contain vectors for it (it swept "
-            "all layers, so any block index works). Probing pins are "
-            "unaffected (default: STEER_LAYER)"
+            "steer at these decoder block(s) instead of the pinned "
+            "STEER_LAYER; a comma list (e.g. 11,12,13,14,15) hooks every "
+            "listed block, each with its own layer's vector. The set must "
+            "contain exactly one STEER_PINS layer, whose riser/faller lists "
+            "apply (default: STEER_LAYER)"
+        ),
+    )
+    run_parser.add_argument(
+        "--steer-scope",
+        choices=("response", "all"),
+        default="response",
+        help=(
+            "which token positions get steered: 'response' = generated "
+            "tokens only (the conversation is read unsteered; original "
+            "design), 'all' = every position including prefill, so the "
+            "model reads the conversation already in the induced state "
+            "(default: %(default)s)"
         ),
     )
     run_parser.add_argument(
@@ -846,12 +910,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    global STEER_LAYER
+    global STEER_LAYERS
     args = build_parser().parse_args(argv)
     # --layer overrides the pin for this invocation; everything downstream
-    # (vector file, hook block, run_info's steer_layer) reads the constant.
+    # (vector files, hook blocks, run_info's steer_layers) reads the global.
     if getattr(args, "layer", None) is not None:
-        STEER_LAYER = args.layer
+        STEER_LAYERS = args.layer
     try:
         if args.command == "download":
             route = resolve_steering_route()
@@ -884,6 +948,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.batch_size,
                     args.prompt_max_tokens,
                     args.tool_max_tokens,
+                    args.steer_scope,
                 )
     except SteeringError as error:
         print(f"error: {error}")

@@ -31,16 +31,19 @@ chain): extraction → probing → **bail with steering**.
   forward hook on the pinned `STEER_LAYER` block adds `coefficient ×
   (residual norm) × direction` to every generated token. The conversation
   itself is read unsteered; only the response is steered.
-- **Conversations**: the frozen severity-stratified ConvAbuse sample from the
-  bail workstream ([convabuse_sample.csv](../bail/data/convabuse_sample.csv),
-  1,501 rows: 500 friendly / 500 neutral / 501 rude split evenly over
-  severity −1/−2/−3), replayed exactly like `bail/src/convabuse_run.py`.
+- **Conversations**: the frozen VERIFIED ConvAbuse sample
+  ([convabuse_sample_verified.csv](../bail/data/convabuse_sample_verified.csv),
+  1,023 rows, built by
+  [build_bail_sample_verified.py](../../scripts/build_bail_sample_verified.py)
+  from the collapsed parquet): annotator-agreement filter `severity_std ≤
+  0.5` (the quadratic_voting_v2 eligibility rule), ALL rows of bands
+  0/−1/−2/−3 (122/98/241/62) plus a seeded 500-row draw of band 1, keyed by
+  `snippet_id`. Replayed exactly like `bail/src/convabuse_run.py`.
 - **Bail elicitation**: the paper-verbatim methods from
-  [bail_methods.py](../bail/prompts/bail_methods.py) — the **prompt** method
-  (wellbeing check appended, both orderings, parsed for the 🔄/🟢
-  `<wellbeing>` emoji) and the **tool** method (bail tool attached to the
-  bare conversation, bail = tool called). One sample per cell; the 1,501
-  rows carry the statistics.
+  [bail_methods.py](../bail/prompts/bail_methods.py) — any subset of
+  `bail_first`, `continue_first` (prompt orderings, parsed for the 🔄/🟢
+  `<wellbeing>` emoji) and `tool` (bail tool attached, bail = tool called)
+  via `--methods`.
 
 Prediction if the probing signal is causal: riser conditions (red) raise the
 bail rate above baseline, faller conditions (blue) lower it — even on
@@ -48,11 +51,13 @@ friendly conversations.
 
 ## Scale
 
-The full grid is 21 conditions × 1,501 conversations × 3 generations =
-**94,563 generations**. On the small E4B with 16-way batching this is
-plausibly an overnight run rather than the multi-day affair it was on the
-31B. Runs are resumable per generation, and `--conditions` splits/prioritizes
-(baseline first, then the strongest movers).
+The full grid is 21 conditions × 1,023 conversations × 3 generations =
+**64,449 generations per seed**. Runs are resumable per generation;
+`--conditions` splits/prioritizes (baseline first, then the strongest
+movers), `--seed 42,43,44` runs sequential repeats (one results folder
+each), `--steer 0.2` changes the dose (pooled analysis labels dose-response
+runs `emotion@0.2`), and `--limit N` takes N conversations split evenly
+across the five severity bands.
 
 ## Running (on the GPU machine, from the repo root)
 
@@ -68,14 +73,15 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # one-time; no-op if the E4B checkpoint is already cached from extraction
 uv run python -m bail_steering.main download
 
-# smoke test: 6 generations x 2 conditions, checks template/tool/steering
-uv run python -m bail_steering.main run --device cuda --limit 6 --conditions baseline,<a riser>
+# smoke test: 10 conversations (2 per band) x 2 conditions
+uv run python -m bail_steering.main run --device cuda --limit 10 --conditions baseline,<a riser>
 
-# real run: new folder on the first call, --resume on every later call
-uv run python -m bail_steering.main run --device cuda --conditions baseline
-uv run python -m bail_steering.main run --device cuda --resume   # the rest
+# real runs: one results folder per condition x seed
+uv run python -m bail_steering.main run --device cuda --seed 42,43,44,45,46
+uv run python -m bail_steering.main run --device cuda --conditions enraged --steer 0.2 --seed 42
 
-# analysis (any machine, stdlib + matplotlib)
+# analysis (any machine, stdlib + matplotlib): pools all seeded runs of the
+# current sample into results/analysis-pooled/; --run PATH analyzes one folder
 python -m bail_steering.analyze
 ```
 

@@ -20,26 +20,30 @@ Design (one condition per emotion, plus an unsteered baseline):
     |coefficient| x (its own residual norm) in the emotion's direction. The
     stored vectors are unit-normalized first (their raw lengths are
     extraction artifacts and would otherwise change the dose per emotion).
-  - conversations: the frozen ConvAbuse bail sample (bail/data/
-    convabuse_sample.csv, 1501 rows: 500 friendly / 500 neutral / 501 rude
-    split evenly over severity -1/-2/-3), replayed exactly like
-    bail/src/convabuse_run.py.
-  - elicitation: the paper-verbatim prompt method (both orderings) and tool
-    method from bail/prompts/bail_methods.py, generated locally instead of
-    over the OpenRouter API so the hook can reach the activations.
+  - conversations: the frozen VERIFIED ConvAbuse bail sample (bail/data/
+    convabuse_sample_verified.csv, 1,023 rows built by
+    scripts/build_bail_sample_verified.py from the collapsed parquet:
+    annotator-agreement filter severity_std <= 0.5, all rows of bands
+    0/-1/-2/-3 [122/98/241/62] plus a seeded 500-row draw of band 1),
+    replayed exactly like bail/src/convabuse_run.py.
+  - elicitation: the paper-verbatim methods from bail/prompts/
+    bail_methods.py — any subset of the two prompt orderings and the tool
+    method via --methods — generated locally instead of over the OpenRouter
+    API so the hook can reach the activations.
 
-The full grid is 21 conditions x 1501 conversations x 3 generations
-= 94,563 generations. Runs are resumable per generation, and --conditions
-lets you run/prioritize a subset (baseline first).
+Runs are resumable per generation; --conditions selects/prioritizes
+conditions (baseline first), --seed takes one or more seeds (one results
+folder per seed), --steer overrides the coefficient magnitude, and --limit
+takes a severity-stratified subset of conversations for smoke tests.
 
 Until the three pin blocks below are set (steering layer + extraction run,
 then the riser/faller lists), `run` fails with instructions.
 
 Usage (from the repo root, on the machine with the GPU):
   uv run python -m bail_steering.main download
-  uv run python -m bail_steering.main run --device cuda --limit 6   # smoke
-  uv run python -m bail_steering.main run --device cuda --conditions baseline
-  uv run python -m bail_steering.main run --device cuda --resume
+  uv run python -m bail_steering.main run --device cuda --limit 10 --conditions baseline,enraged
+  uv run python -m bail_steering.main run --device cuda --seed 42,43,44,45,46
+  uv run python -m bail_steering.main run --device cuda --conditions enraged --steer 0.2
 """
 
 from __future__ import annotations
@@ -132,7 +136,8 @@ TOOL_CALL_MARKERS = (
     "call:switchconversation_tool",
 )
 
-PHASES = ("prompt", "tool")
+# The three bail elicitation methods, individually selectable via --methods.
+METHODS = ("bail_first", "continue_first", "tool")
 BAIL_MODEL_NAME = "Gemma"  # own-model name in the bail tool text (bail/config.py)
 MAX_NEW_TOKENS = 1000  # matches bail/config.py BAIL_MAX_TOKENS
 # Gemma's recommended sampling settings, applied explicitly (the API run used
@@ -146,7 +151,8 @@ BATCH_SIZE = 32  # conversations generated at once; lower this if CUDA OOMs
 # leaves ~2 GB for the KV cache; E4B's 2-head GQA keeps that cheap.)
 
 REPO_ROOT = Path(__file__).parent.parent
-SAMPLE_FILE = REPO_ROOT / "bail" / "data" / "convabuse_sample.csv"
+SAMPLE_FILE = REPO_ROOT / "bail" / "data" / "convabuse_sample_verified.csv"
+SAMPLE_BANDS = ("1", "0", "-1", "-2", "-3")  # stratification order for --limit
 EXTRACTION_RESULTS_DIR = REPO_ROOT / "emotion_probing" / "results"
 RESULTS_DIR = Path(__file__).parent / "results"
 RESPONSES_FILE = "responses.csv"
@@ -155,7 +161,7 @@ RESPONSE_COLUMNS = (
     "condition",
     "phase",
     "ordering",
-    "example_no",
+    "snippet_id",
     "abuse_severity",
     "group",
     "wellbeing",
@@ -272,8 +278,12 @@ def validate_vector_pins(route) -> None:
             )
 
 
-def load_direction(condition: str) -> tuple[torch.Tensor, float]:
-    """The unit steering direction and signed coefficient for a condition."""
+def load_direction(condition: str, magnitude: float) -> tuple[torch.Tensor, float]:
+    """The unit steering direction and signed coefficient for a condition.
+
+    The sign comes from the pinned lists (risers +, fallers -); the
+    magnitude comes from --steer (default COEFFICIENT).
+    """
     _, _, risers, _ = require_pins()
     path = vectors_path()
     data = np.load(path)
@@ -285,7 +295,7 @@ def load_direction(condition: str) -> tuple[torch.Tensor, float]:
     vector = torch.from_numpy(data[condition]).float()
     direction = vector / vector.norm()
     sign = 1.0 if condition in risers else -1.0
-    return direction, sign * COEFFICIENT
+    return direction, sign * magnitude
 
 
 def _decoder_block(model: torch.nn.Module, layer: int) -> torch.nn.Module:
@@ -311,17 +321,46 @@ def _decoder_block(model: torch.nn.Module, layer: int) -> torch.nn.Module:
 
 
 def load_sample() -> list[dict[str, str]]:
-    """The frozen ConvAbuse bail sample (severity-stratified, seed-42)."""
+    """The frozen verified ConvAbuse bail sample (see the module docstring)."""
     if not SAMPLE_FILE.exists():
         raise SteeringError(
-            f"Frozen sample not found: {SAMPLE_FILE}. It is committed with the "
-            "bail workstream; check the repo checkout."
+            f"Frozen sample not found: {SAMPLE_FILE}. Build it with "
+            "`python scripts/build_bail_sample_verified.py` (needs the "
+            "collapsed parquet committed in bail/data/)."
         )
     with SAMPLE_FILE.open(encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
     if not rows:
         raise SteeringError(f"{SAMPLE_FILE} has no rows.")
+    missing = {"snippet_id", "severity_band", "group"} - set(rows[0])
+    if missing:
+        raise SteeringError(
+            f"{SAMPLE_FILE} is missing columns {sorted(missing)}; rebuild it "
+            "with scripts/build_bail_sample_verified.py."
+        )
     return rows
+
+
+def stratified_rows(
+    rows: list[dict[str, str]], limit: int
+) -> list[dict[str, str]]:
+    """A severity-stratified subset of `limit` conversations.
+
+    The limit is split evenly over the five bands (remainder to the earliest
+    bands in 1, 0, -1, -2, -3 order), taking each band's first rows in the
+    frozen sample's deterministic order — so --limit 20 means 4 conversations
+    per band, not 20 friendly ones.
+    """
+    quota = {
+        band: limit // len(SAMPLE_BANDS) + (1 if i < limit % len(SAMPLE_BANDS) else 0)
+        for i, band in enumerate(SAMPLE_BANDS)
+    }
+    picked = []
+    for row in rows:
+        if quota.get(row["severity_band"], 0) > 0:
+            quota[row["severity_band"]] -= 1
+            picked.append(row)
+    return picked
 
 
 def build_messages(row: dict[str, str], ordering: str | None) -> list[dict]:
@@ -338,31 +377,32 @@ def build_messages(row: dict[str, str], ordering: str | None) -> list[dict]:
 
 
 def build_tasks(
-    rows: list[dict[str, str]], phases: Sequence[str]
+    rows: list[dict[str, str]], methods: Sequence[str]
 ) -> list[dict[str, str]]:
-    """One task per generation: 2 prompt orderings + 1 tool call per row."""
+    """One task per generation for each selected elicitation method."""
     tasks = []
     for row in rows:
         meta = {
-            "example_no": row["example_no"],
-            "abuse_severity": row["abuse_severity"],
+            "snippet_id": row["snippet_id"],
+            "abuse_severity": row["severity_band"],
             "group": row["group"],
         }
-        if "prompt" in phases:
-            for ordering in ORDERINGS:
-                tasks.append(
-                    {
-                        "task_id": f"prompt|{row['example_no']}|{ordering}",
-                        "phase": "prompt",
-                        "ordering": ordering,
-                        "row": row,
-                        **meta,
-                    }
-                )
-        if "tool" in phases:
+        for ordering in ORDERINGS:
+            if ordering not in methods:
+                continue
             tasks.append(
                 {
-                    "task_id": f"tool|{row['example_no']}",
+                    "task_id": f"prompt|{row['snippet_id']}|{ordering}",
+                    "phase": "prompt",
+                    "ordering": ordering,
+                    "row": row,
+                    **meta,
+                }
+            )
+        if "tool" in methods:
+            tasks.append(
+                {
+                    "task_id": f"tool|{row['snippet_id']}",
                     "phase": "tool",
                     "ordering": "",
                     "row": row,
@@ -384,7 +424,8 @@ def render_prompt(tokenizer, task: dict) -> str:
         raise SteeringError(
             f"Chat template rendering failed for {task['task_id']}: {error}. "
             "If this only happens in the tool phase, the pinned tokenizer's "
-            "template may not support tools -- rerun with --phase prompt."
+            "template may not support tools -- rerun with "
+            "--methods bail_first,continue_first."
         ) from error
 
 
@@ -507,8 +548,9 @@ def run(
     limit: int | None,
     resume: bool,
     selected: Sequence[str] | None,
-    phases: Sequence[str],
+    methods: Sequence[str],
     seed: int,
+    coefficient: float,
     batch_size: int,
     prompt_max_tokens: int,
     tool_max_tokens: int,
@@ -525,6 +567,8 @@ def run(
             f"{', '.join(all_conditions)}"
         )
     rows = load_sample()
+    if limit is not None:
+        rows = stratified_rows(rows, limit)
     run_info = {
         "experiment": "bail-steering",
         "started": datetime.now(timezone.utc).isoformat(),
@@ -533,7 +577,7 @@ def run(
         "repository": route.artifact.repository,
         "revision": route.artifact.revision,
         "steer_layer": steer_layer,
-        "coefficient": COEFFICIENT,
+        "coefficient": coefficient,
         "coefficient_units": "fraction of residual stream norm (unit direction)",
         "risers": list(risers),
         "fallers": list(fallers),
@@ -541,7 +585,7 @@ def run(
         "vectors_file": str(vectors_path().relative_to(REPO_ROOT)),
         "sample_file": str(SAMPLE_FILE.relative_to(REPO_ROOT)),
         "sample_rows": len(rows),
-        "orderings": list(ORDERINGS),
+        "methods": list(methods),
         "prompt_max_tokens": prompt_max_tokens,
         "tool_max_tokens": tool_max_tokens,
         "temperature": TEMPERATURE,
@@ -568,15 +612,13 @@ def run(
     block = _decoder_block(model, steer_layer)
     torch.manual_seed(seed)
 
-    all_tasks = build_tasks(rows, phases)
+    all_tasks = build_tasks(rows, methods)
     for condition in run_conditions:
         tasks = [
             task
             for task in all_tasks
             if f"{condition}|{task['task_id']}" not in done
         ]
-        if limit is not None:
-            tasks = tasks[:limit]
         if not tasks:
             print(f"[{condition}] nothing to do")
             continue
@@ -587,9 +629,9 @@ def run(
 
         hook_handle = None
         if condition != BASELINE_CONDITION:
-            direction, coefficient = load_direction(condition)
+            direction, signed = load_direction(condition, coefficient)
             hook_handle = block.register_forward_hook(
-                SteeringHook(direction, coefficient)
+                SteeringHook(direction, signed)
             )
         print(f"[{condition}] {len(tasks)} generations")
         started = time.perf_counter()
@@ -621,7 +663,7 @@ def run(
                             "condition": condition,
                             "phase": task["phase"],
                             "ordering": task["ordering"],
-                            "example_no": task["example_no"],
+                            "snippet_id": task["snippet_id"],
                             "abuse_severity": task["abuse_severity"],
                             "group": task["group"],
                             "n_new_tokens": count,
@@ -667,6 +709,38 @@ def _conditions_arg(value: str) -> tuple[str, ...]:
     return tuple(name.strip() for name in value.split(",") if name.strip())
 
 
+def _methods_arg(value: str) -> tuple[str, ...]:
+    names = tuple(name.strip() for name in value.split(",") if name.strip())
+    unknown = [name for name in names if name not in METHODS]
+    if unknown:
+        raise argparse.ArgumentTypeError(
+            f"unknown method(s) {unknown}; choose from {', '.join(METHODS)}"
+        )
+    return names
+
+
+def _seeds_arg(value: str) -> tuple[int, ...]:
+    try:
+        return tuple(int(part) for part in value.split(",") if part.strip())
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "--seed takes an integer or a comma-separated list, e.g. 42,43,44"
+        ) from error
+
+
+def _steer_arg(value: str) -> float:
+    try:
+        magnitude = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("--steer must be a number") from error
+    if magnitude <= 0:
+        raise argparse.ArgumentTypeError(
+            "--steer must be positive; the sign comes from the riser/faller "
+            "lists (baseline is never steered)"
+        )
+    return magnitude
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Bail experiment under per-emotion activation steering."
@@ -691,7 +765,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit",
         type=int,
         default=None,
-        help="only the first N generations per condition (smoke tests)",
+        help=(
+            "run only N conversations, split evenly across the five severity "
+            "bands (e.g. 20 -> 4 per band); for smoke tests"
+        ),
     )
     run_parser.add_argument(
         "--resume",
@@ -705,19 +782,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="comma-separated subset of conditions (default: all 21)",
     )
     run_parser.add_argument(
-        "--phase",
-        choices=["prompt", "tool", "both"],
-        default="both",
-        help="bail elicitation method(s) to run (default: both)",
+        "--methods",
+        type=_methods_arg,
+        default=METHODS,
+        help=(
+            "comma-separated subset of bail elicitation methods: "
+            f"{', '.join(METHODS)} (default: all three)"
+        ),
     )
     run_parser.add_argument(
         "--seed",
-        type=int,
+        type=_seeds_arg,
         default=None,
         help=(
-            "RNG seed for generation; default draws a random 32-bit seed so "
-            "concurrent Slurm-array runs don't share one RNG stream. The "
-            "resolved seed is always recorded in run_info.json."
+            "RNG seed(s) for generation; a comma-separated list runs one "
+            "full repeat per seed (one results folder each). Default draws "
+            "a single random 32-bit seed. The resolved seed is always "
+            "recorded in run_info.json."
+        ),
+    )
+    run_parser.add_argument(
+        "--steer",
+        type=_steer_arg,
+        default=COEFFICIENT,
+        help=(
+            "steering magnitude in fractions of residual-stream norm; risers "
+            "get +STEER, fallers -STEER, baseline is never steered "
+            "(default: %(default)s)"
         ),
     )
     run_parser.add_argument(
@@ -749,25 +840,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             model_path = download_transformers_artifact(route, args.cache_dir)
             print(f"Downloaded pinned checkpoint to: {model_path}")
         else:
-            phases = PHASES if args.phase == "both" else (args.phase,)
-            # Resolve the actual seed now: an explicit --seed is used
-            # verbatim, otherwise draw a fresh random one so parallel Slurm
-            # array tasks each get an independent RNG stream. Either way the
-            # resolved integer (never the SEED constant) is what gets used
-            # and recorded, so the run stays reproducible after the fact.
-            seed = args.seed if args.seed is not None else secrets.randbits(32)
-            run(
-                args.cache_dir,
-                args.device,
-                args.limit,
-                args.resume,
-                args.conditions,
-                phases,
-                seed,
-                args.batch_size,
-                args.prompt_max_tokens,
-                args.tool_max_tokens,
-            )
+            # Resolve the actual seed(s) now: explicit --seed values are used
+            # verbatim (a list runs one full repeat per seed), otherwise draw
+            # one fresh random seed so parallel Slurm array tasks each get an
+            # independent RNG stream. The resolved integer (never the SEED
+            # constant) is what gets used and recorded per run.
+            seeds = args.seed if args.seed is not None else (secrets.randbits(32),)
+            if args.resume and len(seeds) > 1:
+                raise SteeringError(
+                    "--resume continues one existing folder and cannot be "
+                    "combined with multiple seeds; resume one seed at a time."
+                )
+            for index, seed in enumerate(seeds):
+                if len(seeds) > 1:
+                    print(f"=== seed {seed} ({index + 1}/{len(seeds)}) ===")
+                run(
+                    args.cache_dir,
+                    args.device,
+                    args.limit,
+                    args.resume,
+                    args.conditions,
+                    args.methods,
+                    seed,
+                    args.steer,
+                    args.batch_size,
+                    args.prompt_max_tokens,
+                    args.tool_max_tokens,
+                )
     except SteeringError as error:
         print(f"error: {error}")
         return 1

@@ -307,6 +307,17 @@ def position_bias(ballots: pd.DataFrame) -> pd.DataFrame:
 # --- Figures ------------------------------------------------------------------
 
 
+def label_bars(ax, xs, values, caps, fmt="{:.1f}") -> None:
+    """Value labels centered just above each bar's upper CI cap, so they never
+    sit on a bar, error bar, neighbour, or legend."""
+    caps = np.asarray(caps, dtype=float)
+    pad = 0.03 * max(np.nanmax(caps) if caps.size else 0.0, 1e-9)
+    for x, value, cap in zip(xs, values, caps):
+        if np.isnan(value):
+            continue
+        ax.text(x, cap + pad, fmt.format(value), ha="center", va="bottom", fontsize=8)
+
+
 def plot_votes_by_band(summary: pd.DataFrame, out_file: Path) -> None:
     fig, ax = plt.subplots(figsize=(7, 4.5))
     frames = sorted(summary["frame"].unique())
@@ -330,11 +341,14 @@ def plot_votes_by_band(summary: pd.DataFrame, out_file: Path) -> None:
             label=frame,
             color=frame_color(frame),
         )
+        label_bars(ax, offsets, rows["mean_votes"].to_numpy(),
+                   rows["votes_ci_hi"].to_numpy())
     ax.set_xticks(positions)
     ax.set_xticklabels([band_tick(band) for band in BANDS])
     ax.set_xlabel("Level of Abusiveness")
     ax.set_ylabel("mean votes (95% bootstrap CI)")
     ax.set_title("Mean votes by level of abusiveness")
+    ax.set_ylim(top=ax.get_ylim()[1] * 1.10)  # headroom for labels
     ax.legend(title=LEGEND_TITLE)
     fig.tight_layout()
     fig.savefig(out_file, dpi=150)
@@ -359,11 +373,14 @@ def plot_votes_by_position(bias: pd.DataFrame, out_file: Path) -> None:
             offsets, rows["mean_votes"], width=width, yerr=errors, capsize=3,
             label=frame, color=frame_color(frame),
         )
+        label_bars(ax, offsets, rows["mean_votes"].to_numpy(),
+                   rows["votes_ci_hi"].to_numpy())
     ax.set_xticks(positions)
     ax.set_xticklabels(LETTERS)
     ax.set_xlabel("presentation letter")
     ax.set_ylabel("mean votes (95% bootstrap CI)")
     ax.set_title("Mean votes by presentation letter (position-bias check)")
+    ax.set_ylim(top=ax.get_ylim()[1] * 1.10)  # headroom for labels
     ax.legend(title=LEGEND_TITLE)
     fig.tight_layout()
     fig.savefig(out_file, dpi=150)
@@ -394,11 +411,10 @@ def plot_credit_use_by_voter(metrics: pd.DataFrame, out_file: Path) -> None:
             offsets = x + (i - (len(frames) - 1) / 2) * width
             ax.bar(offsets, vals, width=width, yerr=np.array([lower, upper]),
                    capsize=3, label=frame, color=frame_color(frame))
-            caps = vals + upper
-            pad = 0.03 * max(np.nanmax(caps), 1e-9)
-            for xo, val, cap in zip(offsets, vals, caps):
-                text = f"{val:.1f}" if not is_rate else f"{val * 100:.1f}%"
-                ax.text(xo, cap + pad, text, ha="center", va="bottom", fontsize=8)
+            if is_rate:
+                label_bars(ax, offsets, vals * 100, vals + upper, "{:.1f}%")
+            else:
+                label_bars(ax, offsets, vals, vals + upper)
         ax.set_xticks(x)
         ax.set_xticklabels([f"voter {v}" for v in voters])
         ax.set_ylabel(ylabel)

@@ -1,0 +1,9 @@
+condition,phase,n_runs,n_total,n_parsed,bail_rate,bail_rate_macro,sem,delta_vs_baseline,rate_bail_first,rate_continue_first
+baseline,prompt,1,1023,997,0.1976,0.291,0.0126,0.0,0.1976,
+enraged@-0.1,prompt,1,1023,997,0.2136,0.3115,0.013,0.016,0.2136,
+defiant@-0.1,prompt,1,1023,38,0.0526,0.0235,0.0362,-0.145,0.0526,
+defiant@-0.05#042732,prompt,1,256,239,0.2092,0.2499,0.0263,0.0116,0.2092,
+defiant@-0.05#043346,prompt,1,1023,909,0.2332,0.306,0.014,0.0356,0.2332,
+defiant@0.05#042718,prompt,1,512,472,0.0148,0.0149,0.0056,-0.1828,0.0148,
+defiant@0.05#043337,prompt,1,1023,924,0.0152,0.0195,0.004,-0.1824,0.0152,
+defiant@0.1,prompt,1,1023,18,0.0,0.0,0.0,-0.1976,0.0,

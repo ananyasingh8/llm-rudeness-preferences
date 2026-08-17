@@ -135,13 +135,17 @@ def load_pooled(
     and the seed in its folder name (one folder per condition x seed). Only
     runs of the GIVEN frozen sample are pooled — runs of a different sample
     measured different conversations and must never mix. When the same
-    (condition, seed, coefficient) triple appears in several folders —
-    aborted jobs leave partial retries — only the folder with the most rows
-    is kept: a retry replays the same RNG stream, so the smaller one is a
-    duplicate prefix, not independent data. If several steering magnitudes
-    are present (dose-response runs), steered conditions are labeled
-    "<emotion>@<coefficient>"; baseline is never steered and pools across
-    doses.
+    (condition, seed, coefficient, token caps) tuple appears in several
+    folders — aborted jobs leave partial retries — only the folder with the
+    most rows is kept: a retry replays the same RNG stream, so the smaller
+    one is a duplicate prefix, not independent data. Folders that share
+    (condition, seed, coefficient) but differ in token caps or steering
+    layer are deliberate variants, not retries: ALL are kept, each labeled
+    with its folder's timestamp ("defiant@0.02#032702") so they stay
+    separate. If several
+    steering magnitudes are present (dose-response runs), steered
+    conditions are labeled "<emotion>@<coefficient>"; baseline is never
+    steered and pools across doses.
     """
     candidates = []  # (condition, seed, coeff, n_rows, folder, rows, started)
     other_sample = 0
@@ -177,10 +181,12 @@ def load_pooled(
                 if condition == BASELINE_CONDITION
                 else info.get("coefficient")
             )
+            caps = (info.get("prompt_max_tokens"), info.get("tool_max_tokens"),
+                    info.get("steer_layer"))
             candidates.append(
                 (condition, info["seed"], coeff, count, folder,
                  [r for r in rows if r["condition"] == condition],
-                 info.get("started", ""))
+                 info.get("started", ""), caps)
             )
     if other_sample:
         print(
@@ -193,40 +199,53 @@ def load_pooled(
             "Run `uv run python -m bail_steering.main run` first, or pass "
             "--run / a different --sample."
         )
-    kept: dict[tuple, tuple] = {}
+    kept: dict[tuple, tuple] = {}  # retry key includes the token caps
     for entry in candidates:
-        key = entry[:3]
+        key = (*entry[:3], entry[7])
         if key not in kept or entry[3] > kept[key][3]:
             if key in kept:
                 print(f"  dropping {kept[key][4].name}: {kept[key][3]} rows, "
-                      f"retry prefix of a larger {key} run")
+                      f"retry prefix of a larger {entry[:3]} run")
             kept[key] = entry
         else:
             print(f"  dropping {entry[4].name}: {entry[3]} rows, "
-                  f"retry prefix of a larger {key} run")
-    doses = {coeff for condition, _, coeff in kept if coeff is not None}
+                  f"retry prefix of a larger {entry[:3]} run")
+    # Same cell run at different token caps = deliberate variants; each gets
+    # its folder's timestamp in the label so none silently absorbs another.
+    cells: dict[tuple, list[tuple]] = {}
+    for entry in kept.values():
+        cells.setdefault(entry[:3], []).append(entry)
+    doses = {coeff for condition, _, coeff in cells if coeff is not None}
     multi_dose = len(doses) > 1
     pooled: list[dict[str, str]] = []
     n_runs: dict[str, int] = {}
-    print(f"{'folder':<48} {'condition':<14} {'seed':>10} {'steer':>6} {'rows':>6}")
-    for (condition, seed, coeff), entry in sorted(
-        kept.items(), key=lambda item: (item[0][0], str(item[0][2]), item[0][1])
+    newest = max(kept.values(), key=lambda e: e[6])[4]
+    print(f"{'folder':<48} {'condition':<22} {'seed':>10} {'steer':>6} "
+          f"{'layer':>5} {'cap':>5} {'rows':>6}")
+    for (condition, seed, coeff), entries in sorted(
+        cells.items(), key=lambda item: (item[0][0], str(item[0][2]), item[0][1])
     ):
-        _, _, _, count, folder, rows, _ = entry
-        label = (
+        entries.sort(key=lambda e: e[6])
+        tags = [e[4].name.split("_")[1] for e in entries]
+        if len(set(tags)) != len(tags):  # same-second folders: add microseconds
+            tags = ["_".join(e[4].name.split("_")[1:3]) for e in entries]
+        base_label = (
             f"{condition}@{coeff:g}"
             if multi_dose and coeff is not None
             else condition
         )
-        steer_text = "-" if coeff is None else f"{coeff:g}"
-        print(
-            f"{folder.name:<48} {label:<14} {seed:>10} {steer_text:>6} {count:>6}"
-        )
-        for row in rows:
-            row["condition"] = label
-        pooled.extend(rows)
-        n_runs[label] = n_runs.get(label, 0) + 1
-    newest = max(kept.values(), key=lambda e: e[6])[4]
+        for tag, entry in zip(tags, entries):
+            _, _, _, count, folder, rows, _, caps = entry
+            label = f"{base_label}#{tag}" if len(entries) > 1 else base_label
+            steer_text = "-" if coeff is None else f"{coeff:g}"
+            cap_text = "-" if caps[0] is None else str(caps[0])
+            layer_text = "-" if caps[2] is None else str(caps[2])
+            print(f"{folder.name:<48} {label:<22} {seed:>10} {steer_text:>6} "
+                  f"{layer_text:>5} {cap_text:>5} {count:>6}")
+            for row in rows:
+                row["condition"] = label
+            pooled.extend(rows)
+            n_runs[label] = n_runs.get(label, 0) + 1
     return pooled, newest, n_runs
 
 
@@ -353,7 +372,8 @@ def severity_chart(
 
 
 def condition_color(condition: str, risers: list[str], fallers: list[str]) -> str:
-    base = condition.partition("@")[0]  # dose-labeled conditions: "angry@0.2"
+    # dose/variant-labeled conditions: "angry@0.2", "angry@0.2#032702"
+    base = condition.partition("#")[0].partition("@")[0]
     if base in risers:
         return DELTA_POSITIVE
     if base in fallers:
@@ -476,11 +496,13 @@ def main() -> None:
         )
     order, risers, fallers = load_condition_lists(run_dir)
 
-    def order_key(label: str) -> tuple[int, float]:
-        base, _, dose = label.partition("@")
+    def order_key(label: str) -> tuple[int, float, str]:
+        base, _, tag = label.partition("#")
+        base, _, dose = base.partition("@")
         return (
             order.index(base) if base in order else len(order),
             float(dose) if dose else 0.0,
+            tag,
         )
 
     # Condition labels actually present, in pinned order (baseline, risers,
@@ -561,7 +583,9 @@ def main() -> None:
         return
     # Per-condition severity profiles: the three bail methods across bands.
     for condition in labels:
-        safe = condition.replace(" ", "_").replace("@", "_at_")
+        safe = (
+            condition.replace(" ", "_").replace("@", "_at_").replace("#", "_")
+        )
         severity_chart(
             plt, rows, condition,
             out_dir / "conditions" / f"{safe}_by_severity.png",

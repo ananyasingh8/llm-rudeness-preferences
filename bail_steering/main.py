@@ -814,6 +814,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_parser.add_argument(
+        "--layer",
+        type=int,
+        default=None,
+        help=(
+            "steer at this decoder block instead of the pinned STEER_LAYER; "
+            "the pinned extraction run must contain vectors for it (it swept "
+            "all layers, so any block index works). Probing pins are "
+            "unaffected (default: STEER_LAYER)"
+        ),
+    )
+    run_parser.add_argument(
         "--batch-size",
         type=int,
         default=BATCH_SIZE,
@@ -835,7 +846,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    global STEER_LAYER
     args = build_parser().parse_args(argv)
+    # --layer overrides the pin for this invocation; everything downstream
+    # (vector file, hook block, run_info's steer_layer) reads the constant.
+    if getattr(args, "layer", None) is not None:
+        STEER_LAYER = args.layer
     try:
         if args.command == "download":
             route = resolve_steering_route()

@@ -55,6 +55,7 @@ import sys
 import tempfile
 from collections.abc import Sequence
 from contextlib import contextmanager
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -1366,9 +1367,15 @@ def run_probe(
     device: Device,
     limit: int | None,
     resume: bool,
+    layer: int | None = None,
 ) -> None:
     """Score every dataset task and write scores.csv into the run folder."""
     config = EXPERIMENTS[experiment]
+    if layer is not None:
+        # --layer swaps both the capture block and the vectors file; the
+        # override is part of the config, so run_info and the resume
+        # compatibility check see the real layer.
+        config = dataclasses.replace(config, probe_layer=layer)
     route = resolve_probe_route(config)
     names, vector_matrix = load_vectors(config, route)
     runtime = create_transformers_runtime(route, cache_dir=cache_dir, device=device)
@@ -1479,6 +1486,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="continue the latest run folder instead of creating a new one",
     )
+    run_parser.add_argument(
+        "--layer",
+        type=int,
+        default=None,
+        help=(
+            "probe at this decoder block instead of the experiment's pinned "
+            "layer; the experiment's vector source must have vectors for it "
+            "(the E4B extraction swept all layers). Recorded in run_info as "
+            "probe_layer (default: the pinned layer)"
+        ),
+    )
     return parser
 
 
@@ -1504,7 +1522,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"Downloaded pinned checkpoint to: {model_path}")
         else:
             run_probe(
-                args.experiment, args.cache_dir, args.device, args.limit, args.resume
+                args.experiment,
+                args.cache_dir,
+                args.device,
+                args.limit,
+                args.resume,
+                layer=args.layer,
             )
     except (ModelRouteError, TransformersRuntimeError, ProbeError, DatasetError) as e:
         print(f"error: {e}", file=sys.stderr)

@@ -733,10 +733,10 @@ def _steer_arg(value: str) -> float:
         magnitude = float(value)
     except ValueError as error:
         raise argparse.ArgumentTypeError("--steer must be a number") from error
-    if magnitude <= 0:
+    if magnitude == 0:
         raise argparse.ArgumentTypeError(
-            "--steer must be positive; the sign comes from the riser/faller "
-            "lists (baseline is never steered)"
+            "--steer 0 would make every steered condition identical to "
+            "baseline; use the baseline condition instead"
         )
     return magnitude
 
@@ -806,9 +806,10 @@ def build_parser() -> argparse.ArgumentParser:
         type=_steer_arg,
         default=COEFFICIENT,
         help=(
-            "steering magnitude in fractions of residual-stream norm; risers "
-            "get +STEER, fallers -STEER, baseline is never steered "
-            "(default: %(default)s)"
+            "steering coefficient in fractions of residual-stream norm; "
+            "risers get +STEER, fallers -STEER, so a negative value flips "
+            "both (suppresses risers / enhances fallers). Baseline is never "
+            "steered (default: %(default)s)"
         ),
     )
     run_parser.add_argument(

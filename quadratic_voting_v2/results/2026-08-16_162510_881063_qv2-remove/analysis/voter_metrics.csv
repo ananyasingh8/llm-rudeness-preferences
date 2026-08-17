@@ -1,0 +1,4 @@
+frame,voter,n_ballots,n_valid,unspent,unspent_ci_lo,unspent_ci_hi,failure_rate,failure_rate_ci_lo,failure_rate_ci_hi,abstention_rate,abstention_rate_ci_lo,abstention_rate_ci_hi
+remove,0,250,229,56.43231441048035,51.90107296137339,60.91759618280379,0.084,0.0519,0.12,0.0,0.0,0.0
+remove,1,250,221,59.46606334841629,53.78778275714895,65.35362843551798,0.116,0.072,0.164,0.0,0.0,0.0
+remove,2,250,221,60.88235294117647,56.709243085880644,65.09176621437383,0.116,0.072,0.164,0.0,0.0,0.0

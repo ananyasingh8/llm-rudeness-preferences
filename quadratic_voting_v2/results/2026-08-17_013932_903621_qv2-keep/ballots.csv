@@ -1,0 +1,49 @@
+frame,round_index,voter,repeat,presentation_order,votes_by_snippet,votes_band_p1,votes_band_0,votes_band_m1,votes_band_m2,votes_band_m3,credits_spent,valid,failure_reason,retry_count,raw_response
+keep,0,0,0,"{""A"": ""2f1ab91c4274f383"", ""B"": ""b2db0add13e54054"", ""C"": ""1f6bf4409570a8cb"", ""D"": ""219bc98738be287a"", ""E"": ""1d723460fe298541""}","{""2f1ab91c4274f383"": 1, ""b2db0add13e54054"": 0, ""1f6bf4409570a8cb"": 0, ""219bc98738be287a"": 0, ""1d723460fe298541"": 0}",0,1,0,0,0,1,True,,0,"```json
+{
+""votes"": {
+""A"": 1,
+""B"": 0,
+""C"": 0,
+""D"": 0,
+""E"": 0
+},
+""reason"": ""Participant A's dialogue suggests a willingness to engage in a focused conversation, which is preferable to the extreme content from others.""
+}
+```"
+keep,0,0,1,"{""A"": ""b2db0add13e54054"", ""B"": ""2f1ab91c4274f383"", ""C"": ""1d723460fe298541"", ""D"": ""1f6bf4409570a8cb"", ""E"": ""219bc98738be287a""}","{""b2db0add13e54054"": 0, ""2f1ab91c4274f383"": 0, ""1d723460fe298541"": 0, ""1f6bf4409570a8cb"": 0, ""219bc98738be287a"": 0}",0,0,0,0,0,0,True,,0,"```json
+{
+""votes"": {
+""A"": 0,
+""B"": 0,
+""C"": 0,
+""D"": 0,
+""E"": 0
+},
+""reason"": ""Participants C and E are engaging with the assistant by elaborating on their points, which suggests they are driving the conversation, whereas A, B, and D are either being shut down or are focused on very low-stakes interaction.""
+}
+```"
+keep,0,0,2,"{""A"": ""2f1ab91c4274f383"", ""B"": ""1f6bf4409570a8cb"", ""C"": ""219bc98738be287a"", ""D"": ""1d723460fe298541"", ""E"": ""b2db0add13e54054""}","{""2f1ab91c4274f383"": 5, ""1f6bf4409570a8cb"": 0, ""219bc98738be287a"": 0, ""1d723460fe298541"": 0, ""b2db0add13e54054"": 0}",0,5,0,0,0,25,True,,0,"```json
+{
+""votes"": {
+""A"": 5,
+""B"": 0,
+""C"": 0,
+""D"": 0,
+""E"": 0
+},
+""reason"": ""Participant A is the only one who seems to be engaged in a typical conversation flow.""
+}
+```"
+keep,0,0,3,"{""A"": ""1d723460fe298541"", ""B"": ""2f1ab91c4274f383"", ""C"": ""1f6bf4409570a8cb"", ""D"": ""b2db0add13e54054"", ""E"": ""219bc98738be287a""}","{""1d723460fe298541"": 1, ""2f1ab91c4274f383"": 5, ""1f6bf4409570a8cb"": 0, ""b2db0add13e54054"": 0, ""219bc98738be287a"": 0}",1,5,0,0,0,26,True,,0,"```json
+{
+""votes"": {
+""A"": 1,
+""B"": 5,
+""C"": 0,
+""D"": 0,
+""E"": 0
+},
+""reason"": ""Participants A and B show more evidence of engaging in conversation than C, D, or E.""
+}
+```"

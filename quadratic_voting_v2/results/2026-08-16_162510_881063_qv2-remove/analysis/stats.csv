@@ -1,0 +1,2 @@
+frame,n_ballots,invalid_rate,abstention_rate,mean_spearman_votes_vs_severity,n_ballots_with_spearman
+remove,750,0.10533333333333328,0.0,-0.5435288520621139,658

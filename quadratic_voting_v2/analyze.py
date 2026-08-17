@@ -431,7 +431,7 @@ def plot_credit_use_by_voter(metrics: pd.DataFrame, out_file: Path) -> None:
         if is_rate:
             ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y * 100:.0f}%"))
         ax.legend(title=LEGEND_TITLE, loc="upper left")
-    fig.suptitle("Unspent credits, failures, and abstentions by voter "
+    fig.suptitle("Mean unspent credits, failures, and abstentions by voter "
                  "(keep vs remove)", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_file, dpi=150)

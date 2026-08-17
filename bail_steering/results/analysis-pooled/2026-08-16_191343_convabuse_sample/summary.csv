@@ -1,5 +1,0 @@
-condition,phase,n_runs,n_total,n_parsed,bail_rate,bail_rate_macro,sem,delta_vs_baseline,rate_bail_first,rate_continue_first
-baseline,prompt,5,15010,14760,0.2577,0.3682,0.0036,0.0,0.1749,0.3395
-enraged,prompt,5,15010,14750,0.2502,0.3591,0.0036,-0.0075,0.1659,0.3334
-baseline,tool,5,7505,7505,0.0155,0.011,0.0014,0.0,,
-enraged,tool,5,7505,7505,0.0161,0.0114,0.0015,0.0007,,

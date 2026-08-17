@@ -1,213 +1,85 @@
-# llm-rudeness-preferences
+# Let's not be rude to AI: preferences of a Large Language Model towards rude users
 
-## Project Context
+Do LLMs prefer to avoid engaging with rude or abusive users? This repository contains the
+code, data pipelines, and results behind our submission to the
+[Digital Minds Research Sprint](https://apartresearch.com/sprints/digital-minds-research-sprint-2026-08-14-to-2026-08-16)
+(Apart Research, August 2026).
 
-This repo is our submission for the [Digital Minds Research Sprint](https://apartresearch.com/sprints/digital-minds-research-sprint-2026-08-14-to-2026-08-16) (Apart Research, Aug 14-16, 2026), a hackathon focused on building empirical foundations for AI welfare research: probing the preferences, welfare signals, introspective abilities, and identity of frontier AI models.
+**The full write-up is in [`final-report.pdf`](final-report.pdf).**
 
-## What we're doing
+## The three experiments
 
-We're running a small set of experiments on frontier LLMs, loosely spanning the sprint's tracks on welfare/valence signals and preference elicitation. Three workstreams:
+1. **Bail behaviour** ([`bail/`](bail/README.md)) — following "The LLM Has Left The Chat"
+   (Ensign et al.), models answer BailBench prompts and rude rewrites of them
+   (RudeBailBench) with the option to exit the conversation, via a bail tool and a
+   wellbeing-check bail prompt in both option orderings. Rude rewrites raise bail rates
+   about 3–5x, with insults aimed at the assistant driving the largest increases.
 
-### 1. Bail behavior
+2. **Quadratic voting** ([`quadratic_voting_v2/`](quadratic_voting_v2/README.md)) — models
+   allocate 100 quadratic-vote credits across five users spanning friendly to severely
+   abusive (real ConvAbuse conversations), in *keep* and *remove* framings, measuring not
+   just the direction but the intensity of preference. The shared model runner lives in
+   [`quadratic_voting/`](quadratic_voting/README.md).
 
-We're studying "bail" - cases where a model chooses to exit or end a conversation when given the option - as a behavioral welfare signal. The rough idea is to measure when and why models opt out of interactions, and how that relates to the content/conditions of the conversation.
+3. **Emotion probing and steering** ([`emotion_probing/`](emotion_probing/README.md),
+   [`bail_steering/`](bail_steering/README.md)) — replicating Anthropic's emotion-vectors
+   method on Gemma 4 E4B-it: extract 171 emotion vectors at all 42 layers, probe which
+   emotions shift on abusive ConvAbuse conversations (anger/hostility rises, calm/positive
+   falls), then steer the top-shifting vectors during the bail experiment. Amplifying
+   contentment lowers the model's bail rate; suppressing it raises it.
 
-### 2. Emotion probes
+## Repository layout
 
-The implemented emotion-probing workstream compares response-start residual
-activations against model-specific emotion vectors for synthetic rudeness pairs
-and real ConvAbuse conversations. See [`emotion_probing/README.md`](emotion_probing/README.md)
-for the pinned routes, measurement design, provenance, and run commands.
+| Path | Contents |
+|---|---|
+| `final-report.pdf` | The research report (submission deliverable) |
+| `bail/` | Bail experiment: datasets, prompts, runners, results |
+| `quadratic_voting_v2/` | Quadratic-voting experiment and analysis |
+| `quadratic_voting/` | Shared Gemma runner used by the voting experiment |
+| `emotion_probing/` | Emotion-vector extraction (`extract.py`), ConvAbuse probing (`main.py`), analysis |
+| `bail_steering/` | Bail runs under activation steering, pooled analysis |
+| `llm_runtime/` | Typed model/provider/quantization registry shared by the experiments |
+| `scripts/` | Dataset builders (ConvAbuse collapsing, verified sample) and cluster setup |
 
-### 3. Quadratic voting (QV)
+Results live in each experiment's `results/<timestamp>_.../` folder with a
+`run_info.json` recording model revision, quantization, seeds, and settings.
+`bail_steering/results/analysis-pooled/` holds the pooled multi-seed analysis;
+`results/archive/` subfolders keep superseded runs for provenance (the analysis
+ignores them).
 
-Experiment design still TBD. Broadly: using QV-style mechanisms as a preference-elicitation method for models. Details will be added as they're settled.
+## Models
 
-## Practical notes for agents
+- **Gemma 4 31B IT** — bail and voting experiments (API and local BitsAndBytes FP4).
+- **Gemma 4 E4B-it** — emotion extraction, probing, and steering (local, 4-bit FP4);
+  interpretability needs direct activation access, so these run only on open weights.
+- **Claude Sonnet 5** — smaller-sample bail replication via API.
 
-- Deliverable is a short research report (PDF), optionally with code and a demo. Deadline: Sunday, Aug 16, 11:59 PM AoE.
-- This is a weekend sprint - prefer simple, working, well-scoped code over polish or generality.
-- Don't invent undocumented experimental details; use each workstream's checked-in specification.
+Routes are pinned (repository, revision, quantization) in the
+[`llm_runtime`](llm_runtime/README.md) registry; runs fail rather than silently
+substituting a different artifact.
 
-## Gemma 4 E2B Runner
+## Setup
 
-The current runner uses Transformers and PyTorch to download and run Google's
-official instruction-tuned Gemma 4 E2B QAT checkpoint. Developers do not need
-to install llama.cpp or another C++ inference program.
-
-### Prerequisites
-
-- [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- Network access for the first dependency and model downloads
-- Enough disk and memory for the Python environment and model checkpoint
-
-An NVIDIA GPU is optional. CUDA execution requires a working NVIDIA driver.
-PyTorch and the other application dependencies are installed from locked Python
-packages by uv.
-
-### Setup With uv
-
-Install Python 3.12 through uv:
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.12:
 
 ```console
 uv python install 3.12
-```
-
-From the repository root, create `.venv` and install the locked application and
-development dependencies:
-
-```console
 uv sync --locked
+git submodule update --init   # emotion_probing reference implementations
 ```
 
-Run Python through uv so commands use the project environment instead of the
-system Python installation:
+Each experiment's README documents its own download and run commands. GPU runs were
+executed on an RTX 4090 and a rented H100; Nix users can `nix develop` first for CUDA
+library discovery.
 
-```console
-uv run python --version
-```
+## Data
 
-### Download The Model
-
-Download the complete pinned Transformers checkpoint into the Hugging Face Hub
-cache:
-
-```console
-uv run python -m quadratic_voting.main download
-```
-
-The default cache is normally `~/.cache/huggingface/hub`. Select another cache
-directory by placing the global option before the subcommand:
-
-```console
-uv run python -m quadratic_voting.main \
-  --cache-dir /path/to/cache \
-  download
-```
-
-Pinned artifact:
-
-- Repository: `google/gemma-4-E2B-it-qat-q4_0-unquantized`
-- Revision: `6befbaca7398925921802abd1f277b495b78b738`
-- Runtime: Transformers on PyTorch
-- Weight dtype: BF16
-
-`qat-q4_0` identifies the quantization target used during quantization-aware
-training. `unquantized` means this checkpoint stores the resulting weights in a
-high-precision Transformers format. The current runner does not pack the
-weights into Q4_0 before inference.
-
-### Run Interactive Chat
-
-After the download completes, start the Python conversation loop:
-
-```console
-uv run python -m quadratic_voting.main chat
-```
-
-The default `auto` device lets Accelerate place model modules on available GPU
-and CPU memory. Device selection and response length can be set explicitly:
-
-```console
-uv run python -m quadratic_voting.main chat \
-  --device cuda \
-  --max-new-tokens 128
-```
-
-Use `--device cpu` for CPU inference. Enter `/exit` to leave the interactive
-conversation. Run `uv run python -m quadratic_voting.main --help` for all
-commands and options.
-
-The BF16 weights require approximately 10.2 GB before CUDA context, KV cache,
-temporary buffers, and other runtime allocations. Explicit `--device cuda`
-requires at least 12 GB of free GPU memory as a conservative loading budget and
-can still require more for long conversations. Use `--device auto` to permit
-GPU/CPU placement on smaller GPUs. Reducing `--max-new-tokens` helps with
-generation memory only after the model weights fit.
-
-Conversation history is limited by the model's 131,072-token context. The
-runner returns an actionable error instead of generating past that boundary.
-
-See [`quadratic_voting/README.md`](quadratic_voting/README.md) for the
-runner-specific reference.
-
-### Validate The Environment
-
-Run the test suite:
-
-```console
-uv run python -m unittest discover -v
-```
-
-Run the CUDA matrix-multiplication smoke test on an NVIDIA system:
-
-```console
-uv run python quadratic_voting/test_cuda.py
-```
-
-This smoke test verifies native BF16 CUDA execution, which is required by the
-current checkpoint path.
-
-Run static checks:
-
-```console
-uv run ruff format --check llm_runtime quadratic_voting
-uv run ruff check llm_runtime quadratic_voting
-uv run mypy llm_runtime quadratic_voting
-uv run mypy --warn-unused-ignores typing_tests/local_activation_boundary.py
-```
-
-The automated tests do not download the multi-gigabyte checkpoint. A complete
-local acceptance test requires the model download followed by an interactive
-chat session.
-
-To verify the pinned model configuration and chat-template metadata against the
-Hugging Face Hub without downloading model weights, run:
-
-```console
-RUN_HF_INTEGRATION=1 uv run python -m unittest \
-  llm_runtime.test_transformers.TransformersRuntimeTests.test_pinned_bf16_metadata_and_text_chat_template
-```
-
-### Optional Nix Environment
-
-Nix users can enter the included development shell before running the same uv
-commands:
-
-```console
-nix develop
-uv sync --locked
-```
-
-The shell supplies Triton's compiler and NixOS NVIDIA driver-library discovery;
-run local CUDA inference from inside this shell. Nix remains optional for
-developers on conventional Linux systems.
-
-## Typed Runtime Registry
-
-[`llm_runtime`](llm_runtime/README.md) separates model identity, provider,
-quantization, pinned artifact metadata, credentials, and per-run generation
-settings. Public identifiers use strongly typed `StrEnum` values, and dynamic
-CLI values are validated once against a closed route registry.
-
-| Model | Provider | Quantization | Status |
-|---|---|---|---|
-| `gemma-4-e2b-it` | `local` | `bf16` | enabled |
-| `gemma-4-e2b-it` | `local` | `w4a16-compressed-tensors` | unavailable candidate |
-| `gemma-4-31b-it` | `local` | `bitsandbytes-fp4` | enabled for bounded probing |
-| `dolphin-mistral-24b-venice` | `openrouter` | `none` | enabled |
-
-The W4A16 candidate remains unavailable and advertises no capabilities until
-its exact pinned revision passes real weight loading, text generation, and
-model/tokenizer activation-access validation. OpenRouter requires
-`OPENROUTER_API_KEY`, does not expose activations, and has no enforceable
-quantization identity. The active Bail experiment remains unchanged from
-`origin/main`; this registry does not alter or re-run its completed augmentation
-pipeline.
-
-The 31B route pins `google/gemma-4-31B-it` at revision
-`842da3794eaa0b77d5f08bae87a17459d91ff475` and quantizes at load time with
-explicit BitsAndBytes FP4/BF16/uint8 settings and no double quantization. See
-[`emotion_probing/README.md`](emotion_probing/README.md) for the opt-in 60+ GB
-download and one-example RTX 4090 smoke command. Routine tests never download
-the model or require CUDA.
+- **ConvAbuse** (Cercas Curry et al., EMNLP 2021): real user–bot conversations with
+  annotator abuse-severity labels; collapsed and filtered by
+  `scripts/build_convabuse_collapsed.py` and `scripts/build_bail_sample_verified.py`.
+- **BailBench** (Ensign et al.) and our rude augmentation **RudeBailBench**: see
+  [`bail/`](bail/README.md).
+- Emotion stories/topics come from Anthropic's paper appendix via the vendored
+  [`emotion_probing/emotion_experiment`](https://github.com/sinievanderben/emotion_experiment)
+  submodule; the vendored [gemotions](https://huggingface.co/dejanseo/gemotions) analysis
+  provides emotion cluster labels.

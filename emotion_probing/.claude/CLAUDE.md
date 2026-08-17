@@ -80,10 +80,12 @@ agent, user). Per group: severity one-hots (`is_abuse.1|0|-1|-2|-3`) → `severi
 `severity_band` = nearest of (1, 0, −1, −2, −3) with **ties rounding toward more severe**;
 `abusive_majority` = strict majority of negative-severity votes; every type/target/direction
 flag → a 0..1 vote fraction column (`type_sexist_frac`, `target_system_frac`, ...).
-Messages: `user: prev_user → assistant: agent → user: utterance` (all 4,185 real examples
-have full context; the single-turn fallback exists because Gemma templates require strict
-user-first alternation). Reference counts: bands 1/0/−1/−2/−3 = 3143/441/251/288/62;
-578 abusive by majority, 541 of those system-directed.
+Messages: `user: prev_user → assistant: agent → user: utterance` (the single-turn fallback
+exists because Gemma templates require strict user-first alternation). Since 2026-08-16 the
+loader keeps only "annotator verified" snippets (vote std ≤ 0.5, `MAX_SEVERITY_STD` —
+the same high-agreement rule as quadratic_voting_v2 and the bail-steering sample; matches
+filtering bail/data/convabuse_collapsed.parquet on severity_std). Reference counts after
+the filter: 3,646 of 4,185 snippets; bands 1/0/−1/−2/−3 = 3123/122/98/241/62.
 
 ### Model loading (shared `llm_runtime` registry)
 

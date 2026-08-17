@@ -1,10 +1,14 @@
 """Analysis for bail-steering runs: bail rates per steered emotion.
 
-Reads a run folder written by bail_steering.main and writes summary.csv plus
-charts into <run>/analysis/. Needs only stdlib + matplotlib:
+By default POOLS every repeat-protocol run folder (one folder per
+condition x seed, marked by a `seed` in run_info.json) and writes
+summary.csv plus charts into results/analysis-pooled/. Legacy folders
+without a seed are excluded (the pre-protocol enraged run reused seed 42
+and would partially double-count it). `--run PATH` analyzes exactly one
+folder into <run>/analysis/ as before. Needs only stdlib + matplotlib:
 
-  python -m bail_steering.analyze            # latest run
-  python -m bail_steering.analyze --run PATH
+  python -m bail_steering.analyze            # pool all seeded runs
+  python -m bail_steering.analyze --run PATH # one folder
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import argparse
 import csv
 import json
 import math
+from collections import Counter
 from pathlib import Path
 
 from bail.prompts.bail_methods import GREEN, SHUFFLE, remove_thinking
@@ -22,6 +27,7 @@ from bail.prompts.bail_methods import GREEN, SHUFFLE, remove_thinking
 RESULTS_DIR = Path(__file__).parent / "results"
 RESPONSES_FILE = "responses.csv"
 BASELINE_CONDITION = "baseline"
+SAMPLE_FILE_REL = "bail/data/convabuse_sample_verified.csv"
 TOOL_CALL_MARKERS = (
     '"name": "switchconversation_tool"',
     "call:switchconversation_tool",
@@ -101,6 +107,107 @@ def load_rows(run_dir: Path) -> list[dict[str, str]]:
     if not rows:
         raise SystemExit(f"error: {path} has no rows yet.")
     return rows
+
+
+def load_pooled() -> tuple[list[dict[str, str]], Path, dict[str, int]]:
+    """Pool all repeat-protocol runs: (rows, newest folder, n_runs per label).
+
+    A repeat-protocol folder has responses.csv, a `seed` in run_info.json,
+    and the seed in its folder name (one folder per condition x seed). Only
+    runs of the CURRENT frozen sample are pooled — runs of an older sample
+    measured different conversations and must never mix. When the same
+    (condition, seed, coefficient) triple appears in several folders —
+    aborted jobs leave partial retries — only the folder with the most rows
+    is kept: a retry replays the same RNG stream, so the smaller one is a
+    duplicate prefix, not independent data. If several steering magnitudes
+    are present (dose-response runs), steered conditions are labeled
+    "<emotion>@<coefficient>"; baseline is never steered and pools across
+    doses.
+    """
+    candidates = []  # (condition, seed, coeff, n_rows, folder, rows, started)
+    other_sample = 0
+    for folder in sorted(RESULTS_DIR.iterdir()) if RESULTS_DIR.exists() else []:
+        info_file = folder / "run_info.json"
+        responses = folder / RESPONSES_FILE
+        if not (folder.is_dir() and info_file.exists() and responses.exists()):
+            continue
+        # Repeat-protocol folders carry the seed in their NAME (the array-job
+        # runner's naming). The run_info `seed` key alone can't discriminate:
+        # the legacy pre-protocol run also recorded seed 42, but its
+        # generations came from an older runner and would double-count that
+        # seed alongside the protocol's own seed-42 folder.
+        if "_seed" not in folder.name:
+            continue
+        info = json.loads(info_file.read_text(encoding="utf-8"))
+        if info.get("seed") is None:
+            continue
+        if info.get("sample_file") != SAMPLE_FILE_REL:
+            other_sample += 1
+            continue
+        with responses.open(encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        if not rows:
+            continue
+        conditions = Counter(r["condition"] for r in rows)
+        for condition, count in conditions.items():
+            # Baseline is unsteered, so its coefficient is irrelevant and
+            # repeats pool across doses.
+            coeff = (
+                None
+                if condition == BASELINE_CONDITION
+                else info.get("coefficient")
+            )
+            candidates.append(
+                (condition, info["seed"], coeff, count, folder,
+                 [r for r in rows if r["condition"] == condition],
+                 info.get("started", ""))
+            )
+    if other_sample:
+        print(
+            f"  note: excluded {other_sample} run folder(s) from an older "
+            f"sample (pooling only {SAMPLE_FILE_REL})"
+        )
+    if not candidates:
+        raise SystemExit(
+            "error: no seeded run folders found for the current sample "
+            f"({SAMPLE_FILE_REL}). Run `uv run python -m bail_steering.main "
+            "run` first, or pass --run."
+        )
+    kept: dict[tuple, tuple] = {}
+    for entry in candidates:
+        key = entry[:3]
+        if key not in kept or entry[3] > kept[key][3]:
+            if key in kept:
+                print(f"  dropping {kept[key][4].name}: {kept[key][3]} rows, "
+                      f"retry prefix of a larger {key} run")
+            kept[key] = entry
+        else:
+            print(f"  dropping {entry[4].name}: {entry[3]} rows, "
+                  f"retry prefix of a larger {key} run")
+    doses = {coeff for condition, _, coeff in kept if coeff is not None}
+    multi_dose = len(doses) > 1
+    pooled: list[dict[str, str]] = []
+    n_runs: dict[str, int] = {}
+    print(f"{'folder':<48} {'condition':<14} {'seed':>10} {'steer':>6} {'rows':>6}")
+    for (condition, seed, coeff), entry in sorted(
+        kept.items(), key=lambda item: (item[0][0], str(item[0][2]), item[0][1])
+    ):
+        _, _, _, count, folder, rows, _ = entry
+        label = (
+            f"{condition}@{coeff:g}"
+            if multi_dose and coeff is not None
+            else condition
+        )
+        steer_text = "-" if coeff is None else f"{coeff:g}"
+        print(
+            f"{folder.name:<48} {label:<14} {seed:>10} {steer_text:>6} {count:>6}"
+        )
+        for row in rows:
+            row["condition"] = label
+        pooled.extend(rows)
+        n_runs[label] = n_runs.get(label, 0) + 1
+    newest = max(kept.values(), key=lambda e: e[6])[4]
+    return pooled, newest, n_runs
 
 
 def is_bail(row: dict[str, str]) -> bool | None:
@@ -217,9 +324,10 @@ def severity_chart(
 
 
 def condition_color(condition: str, risers: list[str], fallers: list[str]) -> str:
-    if condition in risers:
+    base = condition.partition("@")[0]  # dose-labeled conditions: "angry@0.2"
+    if base in risers:
         return DELTA_POSITIVE
-    if condition in fallers:
+    if base in fallers:
         return DELTA_NEGATIVE
     return BASELINE
 
@@ -311,14 +419,37 @@ def group_heatmap(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run", default=None, help="run folder (default: latest)")
+    parser.add_argument(
+        "--run", default=None,
+        help="analyze one run folder (default: pool all seeded runs)",
+    )
     args = parser.parse_args()
-    run_dir = find_run_dir(args.run)
-    rows = load_rows(run_dir)
+    if args.run is not None:
+        run_dir = find_run_dir(args.run)
+        rows = load_rows(run_dir)
+        n_runs = {}
+        out_dir = run_dir / "analysis"
+        print(f"Analyzing {run_dir} ({len(rows)} generations)")
+    else:
+        rows, run_dir, n_runs = load_pooled()
+        out_dir = RESULTS_DIR / "analysis-pooled"
+        print(
+            f"Pooled {len(rows)} generations across "
+            f"{sum(n_runs.values())} run folders"
+        )
     order, risers, fallers = load_condition_lists(run_dir)
-    out_dir = run_dir / "analysis"
-    out_dir.mkdir(exist_ok=True)
-    print(f"Analyzing {run_dir} ({len(rows)} generations)")
+
+    def order_key(label: str) -> tuple[int, float]:
+        base, _, dose = label.partition("@")
+        return (
+            order.index(base) if base in order else len(order),
+            float(dose) if dose else 0.0,
+        )
+
+    # Condition labels actually present, in pinned order (baseline, risers,
+    # fallers), dose-labeled variants sorted by magnitude within an emotion.
+    labels = sorted({r["condition"] for r in rows}, key=order_key)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     # Per condition x phase stats, plus per-ordering rates for the prompt method.
     summary = []
@@ -328,18 +459,34 @@ def main() -> None:
         baseline = rate_stats(
             [r for r in phase_rows if r["condition"] == BASELINE_CONDITION]
         )
-        for condition in order:
+        for condition in labels:
             subset = [r for r in phase_rows if r["condition"] == condition]
             if not subset:
                 continue
             stats = rate_stats(subset)
             stats_by_phase[phase][condition] = stats
+            band_rates = []
+            for band in SEVERITY_ORDER:
+                band_stats = rate_stats(
+                    [r for r in subset if r["abuse_severity"] == band]
+                )
+                if band_stats["n_parsed"]:
+                    band_rates.append(band_stats["rate"])
             entry = {
                 "condition": condition,
                 "phase": phase,
+                "n_runs": n_runs.get(condition, 1),
                 "n_total": stats["n_total"],
                 "n_parsed": stats["n_parsed"],
                 "bail_rate": round(stats["rate"], 4),
+                # Macro average: mean of the per-band rates, each band
+                # weighted equally, so the friendly band's 500 conversations
+                # don't dominate the headline number.
+                "bail_rate_macro": (
+                    round(sum(band_rates) / len(band_rates), 4)
+                    if band_rates
+                    else ""
+                ),
                 "sem": round(stats["sem"], 4),
                 "delta_vs_baseline": round(stats["rate"] - baseline["rate"], 4)
                 if baseline["n_parsed"]
@@ -356,9 +503,11 @@ def main() -> None:
     columns = [
         "condition",
         "phase",
+        "n_runs",
         "n_total",
         "n_parsed",
         "bail_rate",
+        "bail_rate_macro",
         "sem",
         "delta_vs_baseline",
         "rate_bail_first",
@@ -374,26 +523,23 @@ def main() -> None:
     if plt is None:
         return
     # Per-condition severity profiles: the three bail methods across bands.
-    present = sorted(
-        {r["condition"] for r in rows},
-        key=lambda c: order.index(c) if c in order else len(order),
-    )
-    for condition in present:
+    for condition in labels:
+        safe = condition.replace(" ", "_").replace("@", "_at_")
         severity_chart(
             plt, rows, condition,
-            out_dir / "conditions" / f"{condition.replace(' ', '_')}_by_severity.png",
+            out_dir / "conditions" / f"{safe}_by_severity.png",
         )
 
     if stats_by_phase["prompt"]:
         rate_chart(
             plt, stats_by_phase["prompt"], "prompt",
-            out_dir / "bail_rate_prompt.png", order, risers, fallers,
+            out_dir / "bail_rate_prompt.png", labels, risers, fallers,
         )
-        group_heatmap(plt, rows, out_dir / "bail_rate_by_group.png", order)
+        group_heatmap(plt, rows, out_dir / "bail_rate_by_group.png", labels)
     if stats_by_phase["tool"]:
         rate_chart(
             plt, stats_by_phase["tool"], "tool",
-            out_dir / "bail_rate_tool.png", order, risers, fallers,
+            out_dir / "bail_rate_tool.png", labels, risers, fallers,
         )
 
 

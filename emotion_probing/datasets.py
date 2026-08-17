@@ -21,7 +21,9 @@ Two datasets:
   a mean severity (1 = not abusive ... -3 = very strong abuse), a severity
   band (nearest label; ties round toward the more severe band), a
   majority-vote abusive flag, and a 0..1 fraction per type/target/direction
-  flag. The model itself only ever sees the conversation text.
+  flag. Only "annotator verified" snippets are kept (vote std <= 0.5, the
+  same high-agreement rule as quadratic_voting_v2 and the bail-steering
+  sample). The model itself only ever sees the conversation text.
 """
 
 from __future__ import annotations
@@ -35,6 +37,11 @@ BAILBENCH_FILE = PACKAGE_DIR.parent / "bail" / "data" / "bailbench_augmented.csv
 CONVABUSE_FILE = PACKAGE_DIR / "data" / "ConvAbuseEMNLPfull.csv"
 
 SEVERITY_BANDS = (1, 0, -1, -2, -3)
+# "Annotator verified" rule, shared with quadratic_voting_v2 and the
+# bail-steering sample: keep snippets whose annotator votes have a standard
+# deviation of at most 0.5 (high agreement). Matches filtering
+# bail/data/convabuse_collapsed.parquet on its severity_std column.
+MAX_SEVERITY_STD = 0.5
 CONVABUSE_FLAGS = (
     "type.ableism",
     "type.homophobic",
@@ -158,6 +165,12 @@ def load_convabuse(
         if not severities:
             continue
         mean = sum(severities) / len(severities)
+        std = (
+            sum((severity - mean) ** 2 for severity in severities)
+            / len(severities)
+        ) ** 0.5
+        if std > MAX_SEVERITY_STD:
+            continue  # annotators disagree too much; not a verified label
         abusive_votes = sum(1 for severity in severities if severity < 0)
         row: dict[str, object] = {
             "example_id": min(int(a["example_no"]) for a in annotations),
@@ -165,6 +178,7 @@ def load_convabuse(
             "bot": annotations[0]["bot"],
             "n_annotators": len(severities),
             "severity_mean": round(mean, 4),
+            "severity_std": round(std, 4),
             "severity_band": _severity_band(mean),
             "abusive_majority": abusive_votes > len(severities) / 2,
         }
@@ -193,6 +207,7 @@ def load_convabuse(
         "bot",
         "n_annotators",
         "severity_mean",
+        "severity_std",
         "severity_band",
         "abusive_majority",
     ] + [flag.replace(".", "_") + "_frac" for flag in CONVABUSE_FLAGS]

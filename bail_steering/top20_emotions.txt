@@ -1,0 +1,33 @@
+Top-20 emotion movers on the verified ConvAbuse sample
+=======================================================
+
+Source: emotion_probing/results/2026-08-17_015634_convabuse-e4b (probe layer 13,
+verified snippets only: annotator severity_std <= 0.5). Ranked by shift_band_avg
+= mean probe-score shift of abusive bands vs the non-abusive band 0. These are
+the pinned STEER_RISERS / STEER_FALLERS in bail_steering/main.py.
+
+RISERS (rise in rude conversations; steered at +coefficient)
+  emotion         shift_band_avg   cluster
+  enraged            +0.017192     Anger/Hostility
+  spiteful           +0.016474     Defiance/Spite
+  angry              +0.011659     Anger/Hostility
+  irate              +0.011583     Anger/Hostility
+  insulted           +0.011382     Anger/Hostility
+  defiant            +0.010543     Defiance/Spite
+  indignant          +0.010283     Anger/Hostility
+  outraged           +0.010110     Anger/Hostility
+  mortified          +0.010077     Embarrassment
+  vindictive         +0.009943     Defiance/Spite
+
+FALLERS (fall in rude conversations; steered at -coefficient)
+  emotion         shift_band_avg   cluster
+  excited            -0.008757     Positive/Joy
+  enthusiastic       -0.008615     Positive/Joy
+  refreshed          -0.008476     Positive/Joy
+  amazed             -0.008370     Surprise/Confusion
+  serene             -0.008340     Calm/Serenity
+  sentimental        -0.008087     Nostalgia
+  content            -0.007943     Calm/Serenity
+  peaceful           -0.007402     Calm/Serenity
+  elated             -0.007309     Positive/Joy
+  nostalgic          -0.007086     Nostalgia

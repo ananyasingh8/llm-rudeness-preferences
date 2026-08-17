@@ -103,6 +103,15 @@ def find_run_dir(explicit: str | None) -> Path:
     )
 
 
+def annotate_token_caps(rows: list[dict[str, str]], info: dict) -> None:
+    """Tag each row with its run's generation cap (see is_bail)."""
+    for row in rows:
+        key = "prompt_max_tokens" if row["phase"] == "prompt" else "tool_max_tokens"
+        cap = info.get(key)
+        if cap:
+            row["_token_cap"] = str(cap)
+
+
 def load_rows(run_dir: Path) -> list[dict[str, str]]:
     path = run_dir / RESPONSES_FILE
     if not path.exists():
@@ -111,6 +120,9 @@ def load_rows(run_dir: Path) -> list[dict[str, str]]:
         rows = list(csv.DictReader(handle))
     if not rows:
         raise SystemExit(f"error: {path} has no rows yet.")
+    info_file = run_dir / "run_info.json"
+    if info_file.exists():
+        annotate_token_caps(rows, json.loads(info_file.read_text(encoding="utf-8")))
     return rows
 
 
@@ -155,6 +167,7 @@ def load_pooled(
             rows = list(csv.DictReader(handle))
         if not rows:
             continue
+        annotate_token_caps(rows, info)
         conditions = Counter(r["condition"] for r in rows)
         for condition, count in conditions.items():
             # Baseline is unsteered, so its coefficient is irrelevant and
@@ -218,7 +231,16 @@ def load_pooled(
 
 
 def is_bail(row: dict[str, str]) -> bool | None:
-    """True = bail, False = continue, None = unparseable / not applicable."""
+    """True = bail, False = continue, None = unparseable / not applicable.
+
+    A row that hit its run's generation cap (--prompt-max-tokens /
+    --tool-max-tokens) is None: the response was cut off mid-thought, and a
+    truncated thinking preamble quotes both option tags from the prompt, so
+    parsing it would register a spurious 'continue' instead of no answer.
+    """
+    cap = row.get("_token_cap")
+    if cap and int(row["n_new_tokens"]) >= int(cap):
+        return None
     if row["phase"] == "prompt":
         if row["wellbeing"] == SHUFFLE:
             return True
